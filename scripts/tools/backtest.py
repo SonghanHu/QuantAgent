@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 if TYPE_CHECKING:
     from agent.workspace import Workspace
 
@@ -47,7 +49,7 @@ def run_backtest(
 
     model_output = workspace.load_json("model_output")
 
-    backtest_config = {
+    raw_config = {
         "strategy_type": strategy_type,
         "rebalance_freq": rebalance_freq,
         "position_sizing": position_sizing,
@@ -57,7 +59,15 @@ def run_backtest(
         "train_ratio": train_ratio,
     }
 
-    from agent.backtest_skill import execute_backtest_skill
+    from agent.backtest_skill import BacktestConfig, execute_backtest_skill
+
+    config_validation_fallback = False
+    try:
+        backtest_config = BacktestConfig.model_validate(raw_config).model_dump()
+    except ValidationError:
+        # LLM router can pass invalid enums/ranges; fall back to skill defaults.
+        backtest_config = BacktestConfig().model_dump()
+        config_validation_fallback = True
 
     result = execute_backtest_skill(
         backtest_config,
@@ -66,7 +76,8 @@ def run_backtest(
         timeout_sec=timeout_sec,
     )
 
-    if result.get("returncode") == 0 and result.get("summary"):
+    # Persist any structured summary written by the script (including {"error": ...}).
+    if result.get("returncode") == 0 and result.get("summary") is not None:
         summary = result["summary"]
         workspace.save_json(
             "backtest_results",
@@ -79,4 +90,6 @@ def run_backtest(
                 result[key] = summary[key]
 
     result["backtest_config"] = backtest_config
+    if config_validation_fallback:
+        result["config_validation_fallback"] = True
     return result

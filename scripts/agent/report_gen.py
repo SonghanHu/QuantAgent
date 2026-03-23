@@ -2,6 +2,9 @@
 Output layer: LLM generates a structured final research report from execution results.
 
 Called at the end of ``workflow_demo.run_workflow`` before emitting ``run_done``.
+
+Uses structured ``parse`` first, then ``json_object`` fallback, then a deterministic
+summary if the API or model does not support structured outputs.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
+from .events import sanitize_for_json
 from .state import AgentState
 from .workspace import Workspace
 
@@ -37,6 +41,13 @@ class FinalReport(BaseModel):
     recommendations: list[str] = Field(description="2-5 actionable next steps")
     limitations: list[str] = Field(description="Known limitations or caveats")
     conclusion: str = Field(description="Final 1-2 sentence conclusion")
+
+
+_JSON_SCHEMA_HINT = """Respond with one JSON object only, with exactly these keys:
+"title" (string), "executive_summary" (string),
+"sections" (array of objects with "heading" and "body" strings),
+"key_findings" (array of strings), "recommendations" (array of strings),
+"limitations" (array of strings), "conclusion" (string)."""
 
 
 def _openai_client() -> OpenAI:
@@ -65,7 +76,8 @@ def _build_context(state: AgentState, workspace: Workspace) -> str:
         parts.append("## Subtasks\n\n" + "\n".join(subtask_lines))
 
     parts.append(f"## Run status: {state.status}")
-    parts.append(f"## Completed subtasks: {len(state.completed_subtasks)}/{len(state.plan.subtasks) if state.plan else '?'}")
+    n_plan = len(state.plan.subtasks) if state.plan else 0
+    parts.append(f"## Completed subtasks: {len(state.completed_subtasks)}/{n_plan}")
 
     exec_lines: list[str] = []
     for rec in state.execution_log:
@@ -110,6 +122,63 @@ def _build_context(state: AgentState, workspace: Workspace) -> str:
     return "\n\n".join(parts)
 
 
+def build_fallback_report(
+    state: AgentState,
+    workspace: Workspace,
+    *,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Deterministic report when LLM calls fail; always JSON-serialisable."""
+    limitations: list[str] = []
+    if error:
+        limitations.append(f"LLM report generation failed: {error}")
+    limitations.append("This summary was assembled without a fresh LLM call.")
+
+    summary_intro = state.plan.goal_summary if state.plan else state.goal
+    lines = [
+        f"- Subtask {rec.subtask_id}: **{rec.tool_name}** — {rec.status}\n  {rec.result_summary[:200]}"
+        for rec in state.execution_log
+    ]
+    body = "\n".join(lines) if lines else "_No execution records._"
+
+    n_err = sum(1 for r in state.execution_log if r.status == "error")
+    findings = [
+        f"Run status: **{state.status}**",
+        f"Tools invoked: {len(state.execution_log)} step(s)" + (f", **{n_err}** error(s)" if n_err else ""),
+    ]
+    arts = list(workspace.list_artifacts().keys())
+    if arts:
+        findings.append(f"Workspace artifacts: {', '.join(arts[:12])}" + (" …" if len(arts) > 12 else ""))
+
+    return sanitize_for_json(
+        {
+            "title": "Research run summary",
+            "executive_summary": summary_intro[:800] if summary_intro else state.goal[:800],
+            "sections": [{"heading": "Execution pipeline", "body": body}],
+            "key_findings": findings,
+            "recommendations": [
+                "Inspect the log and workspace artifacts for full numeric results.",
+                "If reports are often missing, confirm `OPENAI_SMALL_MODEL` supports JSON or structured output.",
+            ],
+            "limitations": limitations,
+            "conclusion": f"The workflow finished with status `{state.status}`.",
+        }
+    )
+
+
+def _persist_and_return(workspace: Workspace, report_dict: dict[str, Any]) -> dict[str, Any]:
+    safe = sanitize_for_json(report_dict)
+    try:
+        workspace.save_json(
+            "final_report",
+            safe,
+            description="Final research report",
+        )
+    except OSError:
+        pass
+    return safe
+
+
 def generate_report(
     state: AgentState,
     workspace: Workspace,
@@ -120,15 +189,29 @@ def generate_report(
     """
     Generate a structured final report from the run's state and workspace.
 
-    Returns the report as a JSON-serialisable dict and saves it to workspace
-    as ``final_report``.
+    Saves ``final_report.json`` to the workspace. Always returns a dict (never raises).
     """
     load_dotenv()
     m = model or os.environ.get("OPENAI_SMALL_MODEL")
     if not m:
-        raise RuntimeError("OPENAI_SMALL_MODEL is not set.")
+        return _persist_and_return(
+            workspace,
+            build_fallback_report(state, workspace, error="OPENAI_SMALL_MODEL is not set."),
+        )
 
-    context = _build_context(state, workspace)
+    if not os.environ.get("OPENAI_API_KEY"):
+        return _persist_and_return(
+            workspace,
+            build_fallback_report(state, workspace, error="OPENAI_API_KEY is not set."),
+        )
+
+    try:
+        context = _build_context(state, workspace)
+    except Exception as exc:  # noqa: BLE001
+        return _persist_and_return(
+            workspace,
+            build_fallback_report(state, workspace, error=f"Context build failed: {exc}"),
+        )
 
     system = (
         "You are a senior quantitative researcher writing the final report for an automated research run. "
@@ -139,38 +222,55 @@ def generate_report(
         "Sections should cover: methodology/pipeline, data, features/analysis, model performance, "
         "backtest results, and evaluation. Adapt sections to what actually happened — skip sections "
         "for steps that didn't produce meaningful results. "
-        "If the run had issues (failed steps, empty features, stub tools), note them honestly."
+        "If the run had issues (failed steps, empty features, stubs), note them honestly."
     )
 
-    cli = client or _openai_client()
-    completion = cli.chat.completions.parse(
-        model=m,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": context},
-        ],
-        response_format=FinalReport,
-    )
-    parsed = completion.choices[0].message.parsed
-    if parsed is None:
-        fallback = {
-            "title": "Run Report",
-            "executive_summary": f"Run completed with status: {state.status}",
-            "sections": [],
-            "key_findings": [],
-            "recommendations": [],
-            "limitations": ["Report generation failed — LLM returned no output."],
-            "conclusion": f"Status: {state.status}",
-        }
-        workspace.save_json("final_report", fallback, description="Final research report (fallback)")
-        return fallback
+    failures: list[str] = []
 
-    report = cast(FinalReport, parsed)
-    report_dict = json.loads(report.model_dump_json())
+    try:
+        cli = client or _openai_client()
+    except Exception as exc:  # noqa: BLE001
+        return _persist_and_return(
+            workspace,
+            build_fallback_report(state, workspace, error=str(exc)),
+        )
 
-    workspace.save_json(
-        "final_report",
-        report_dict,
-        description="Final research report generated by LLM",
-    )
-    return report_dict
+    # 1) Preferred: native structured parse
+    try:
+        completion = cli.chat.completions.parse(
+            model=m,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": context},
+            ],
+            response_format=FinalReport,
+        )
+        parsed = completion.choices[0].message.parsed
+        if parsed is not None:
+            report = cast(FinalReport, parsed)
+            return _persist_and_return(workspace, json.loads(report.model_dump_json()))
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"structured parse: {exc}")
+
+    # 2) Fallback: json_object + Pydantic validation
+    try:
+        r = cli.chat.completions.create(
+            model=m,
+            messages=[
+                {"role": "system", "content": system + "\n\n" + _JSON_SCHEMA_HINT},
+                {"role": "user", "content": context},
+            ],
+            response_format={"type": "json_object"},
+        )
+        raw = (r.choices[0].message.content or "").strip()
+        if not raw:
+            raise RuntimeError("empty model content")
+        obj = json.loads(raw)
+        validated = FinalReport.model_validate(obj)
+        return _persist_and_return(workspace, json.loads(validated.model_dump_json()))
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"json_object: {exc}")
+
+    # 3) Last resort: template summary (+ optional partial parse content in limitations)
+    fb = build_fallback_report(state, workspace, error="; ".join(failures))
+    return _persist_and_return(workspace, fb)

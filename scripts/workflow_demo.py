@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from agent.events import EventBus
 from agent.executor import run_subtask
 from agent.models import Subtask
-from agent.report_gen import generate_report
+from agent.report_gen import build_fallback_report, generate_report
 from agent.state import AgentState
 from agent.workspace import Workspace
 from llm.task_decompose import decompose_task
@@ -218,7 +218,7 @@ def run_workflow(
             )
     except Exception as exc:  # noqa: BLE001
         log(f"Report generation failed: {exc}\n")
-        report = None
+        report = build_fallback_report(state, ws, error=str(exc))
 
     log("=== 5. Final AgentState ===\n")
     log(state.model_dump_json(indent=2, ensure_ascii=False))

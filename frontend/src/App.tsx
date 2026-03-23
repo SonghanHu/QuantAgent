@@ -132,7 +132,7 @@ function App() {
               preview={preview}
               onSelect={(artifactName) => void loadArtifact(artifactName)}
             />
-            <ReportPanel events={events as AgentEvent[]} />
+            <ReportPanel events={events as AgentEvent[]} runId={runId} />
           </div>
         </div>
       </div>

@@ -1,9 +1,11 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { AgentEvent } from '../types'
 
 type ReportPanelProps = {
   events: AgentEvent[]
+  /** Used to load `final_report.json` if `run_done` omitted the report payload (e.g. strict JSON issues). */
+  runId: string | null
 }
 
 type LLMReport = {
@@ -93,7 +95,11 @@ function extractMetrics(events: AgentEvent[]): RunMetrics | null {
     durationSec = Math.round((end - start) / 1000)
   }
 
-  const report = runDone?.report as LLMReport | undefined
+  const rawReport = runDone?.report
+  const report =
+    rawReport && typeof rawReport === 'object' && !Array.isArray(rawReport)
+      ? (rawReport as LLMReport)
+      : undefined
 
   return {
     status: (runDone?.status as string) ?? 'running',
@@ -122,6 +128,19 @@ function MetricCard({ label, value, sub }: { label: string; value: string; sub?:
   )
 }
 
+function isFallbackReport(r: LLMReport): boolean {
+  const lim = r.limitations ?? []
+  return (
+    r.title === 'Research run summary' ||
+    (lim.length > 0 &&
+      lim.some(
+        (l) =>
+          typeof l === 'string' &&
+          (l.includes('without a fresh LLM') || l.includes('LLM report generation failed')),
+      ))
+  )
+}
+
 function renderMarkdown(text: string) {
   const lines = text.split('\n')
   return lines.map((line, i) => {
@@ -138,8 +157,47 @@ function renderMarkdown(text: string) {
   })
 }
 
-export function ReportPanel({ events }: ReportPanelProps) {
-  const metrics = useMemo(() => extractMetrics(events), [events])
+export function ReportPanel({ events, runId }: ReportPanelProps) {
+  const [hydratedReport, setHydratedReport] = useState<LLMReport | null>(null)
+
+  useEffect(() => {
+    setHydratedReport(null)
+  }, [runId])
+
+  useEffect(() => {
+    const runDone = events.find((e) => e.type === 'run_done')
+    const hasReport =
+      runDone &&
+      runDone.report &&
+      typeof runDone.report === 'object' &&
+      !Array.isArray(runDone.report)
+    if (!runId || !runDone || hasReport) return
+
+    void fetch(`/api/workspace/${runId}/final_report`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { kind?: string; content?: unknown } | null) => {
+        if (data?.kind !== 'json' || !data.content || typeof data.content !== 'object') return
+        const c = data.content as Record<string, unknown>
+        setHydratedReport({
+          title: String(c.title ?? 'Report'),
+          executive_summary: String(c.executive_summary ?? ''),
+          sections: Array.isArray(c.sections) ? (c.sections as LLMReport['sections']) : [],
+          key_findings: Array.isArray(c.key_findings) ? (c.key_findings as string[]) : [],
+          recommendations: Array.isArray(c.recommendations) ? (c.recommendations as string[]) : [],
+          limitations: Array.isArray(c.limitations) ? (c.limitations as string[]) : [],
+          conclusion: String(c.conclusion ?? ''),
+        })
+      })
+      .catch(() => {})
+  }, [events, runId])
+
+  const baseMetrics = useMemo(() => extractMetrics(events), [events])
+  const metrics = useMemo(() => {
+    if (!baseMetrics) return null
+    if (baseMetrics.report) return baseMetrics
+    if (hydratedReport) return { ...baseMetrics, report: hydratedReport }
+    return baseMetrics
+  }, [baseMetrics, hydratedReport])
 
   const runDone = events.find((e) => e.type === 'run_done')
 
@@ -193,6 +251,12 @@ export function ReportPanel({ events }: ReportPanelProps) {
       {/* LLM-generated report */}
       {report ? (
         <div className="space-y-4">
+          {isFallbackReport(report) && (
+            <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-200/90">
+              Showing a <strong>template summary</strong> (execution log + artifacts). The primary LLM report step
+              failed or your model may not support structured output — see Limitations below or server logs.
+            </div>
+          )}
           {/* Title + executive summary */}
           <div className="rounded-2xl border border-white/[0.06] bg-slate-900/40 p-4">
             <h3 className="text-base font-semibold text-white">{report.title}</h3>
@@ -259,9 +323,9 @@ export function ReportPanel({ events }: ReportPanelProps) {
           )}
 
           {/* Report sections */}
-          {report.sections.length > 0 && (
+          {(report.sections ?? []).length > 0 && (
             <div className="space-y-3">
-              {report.sections.map((section, i) => (
+              {(report.sections ?? []).map((section, i) => (
                 <div
                   key={i}
                   className="rounded-2xl border border-white/[0.06] bg-slate-900/40 p-4"
@@ -276,13 +340,13 @@ export function ReportPanel({ events }: ReportPanelProps) {
           )}
 
           {/* Key findings */}
-          {report.key_findings.length > 0 && (
+          {(report.key_findings ?? []).length > 0 && (
             <div className="rounded-2xl border border-emerald-400/15 bg-emerald-400/5 p-4">
               <div className="mb-2 text-xs font-medium uppercase tracking-widest text-emerald-400/70">
                 Key findings
               </div>
               <ul className="space-y-1 text-sm text-slate-300">
-                {report.key_findings.map((f, i) => (
+                {(report.key_findings ?? []).map((f, i) => (
                   <li key={i} className="flex gap-2">
                     <span className="flex-shrink-0 text-emerald-400">•</span>
                     {f}
@@ -293,13 +357,13 @@ export function ReportPanel({ events }: ReportPanelProps) {
           )}
 
           {/* Recommendations */}
-          {report.recommendations.length > 0 && (
+          {(report.recommendations ?? []).length > 0 && (
             <div className="rounded-2xl border border-sky-400/15 bg-sky-400/5 p-4">
               <div className="mb-2 text-xs font-medium uppercase tracking-widest text-sky-400/70">
                 Recommendations
               </div>
               <ul className="space-y-1 text-sm text-slate-300">
-                {report.recommendations.map((r, i) => (
+                {(report.recommendations ?? []).map((r, i) => (
                   <li key={i} className="flex gap-2">
                     <span className="flex-shrink-0 text-sky-400">→</span>
                     {r}
@@ -310,13 +374,13 @@ export function ReportPanel({ events }: ReportPanelProps) {
           )}
 
           {/* Limitations */}
-          {report.limitations.length > 0 && (
+          {(report.limitations ?? []).length > 0 && (
             <div className="rounded-2xl border border-amber-400/15 bg-amber-400/5 p-4">
               <div className="mb-2 text-xs font-medium uppercase tracking-widest text-amber-400/70">
                 Limitations
               </div>
               <ul className="space-y-1 text-sm text-slate-400">
-                {report.limitations.map((l, i) => (
+                {(report.limitations ?? []).map((l, i) => (
                   <li key={i} className="flex gap-2">
                     <span className="flex-shrink-0 text-amber-400">⚠</span>
                     {l}
