@@ -7,6 +7,7 @@ Routing: small LLM (structured output) with catalog + validation + retry, then k
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from typing import Any
 
 from tools import TOOL_REGISTRY, run_tool
@@ -29,6 +30,7 @@ def run_subtask(
     routing_model: str | None = None,
     max_catalog_chars: int = 6000,
     routing_retries: int = 2,
+    event_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> AgentState:
     """
     Execute one subtask: resolve tool (LLM or heuristic), call ``run_tool``, append log.
@@ -46,11 +48,24 @@ def run_subtask(
     )
     name = resolved.tool_name
     kwargs = dict(resolved.kwargs)
+    if event_callback is not None:
+        event_callback(
+            {
+                "type": "subtask_tool_resolved",
+                "subtask_id": subtask.id,
+                "subtask_title": subtask.title,
+                "tool_name": name,
+                "source": resolved.source,
+                "kwargs": {k: str(v) for k, v in kwargs.items()},
+            }
+        )
 
     if workspace is not None:
         fn = TOOL_REGISTRY.get(name)
         if fn is not None and "workspace" in inspect.signature(fn).parameters:
             kwargs.setdefault("workspace", workspace)
+        if fn is not None and "event_callback" in inspect.signature(fn).parameters and event_callback is not None:
+            kwargs.setdefault("event_callback", event_callback)
 
     if tool_kwargs:
         kwargs.update(tool_kwargs)
@@ -92,6 +107,18 @@ def run_subtask(
             output=None,
         )
         status = "failed"
+    if event_callback is not None:
+        event_callback(
+            {
+                "type": "subtask_done",
+                "subtask_id": subtask.id,
+                "subtask_title": subtask.title,
+                "tool_name": name,
+                "status": record.status,
+                "result_summary": record.result_summary,
+                "output": record.output,
+            }
+        )
 
     done = list(state.completed_subtasks)
     if subtask.id not in done:

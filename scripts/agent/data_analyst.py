@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -122,6 +123,7 @@ def run_data_analyst(
     client: OpenAI | None = None,
     max_rounds: int = 4,
     timeout_sec: int = 120,
+    event_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DataAnalystResult:
     """
     Iterative sub-agent: analyze data until the model is confident enough to propose features.
@@ -143,6 +145,14 @@ def run_data_analyst(
 
     for round_num in range(1, max_rounds + 1):
         print(f"  [data_analyst] round {round_num}: {instruction[:80]}...")
+        if event_callback is not None:
+            event_callback(
+                {
+                    "stage": "analysis_start",
+                    "round": round_num,
+                    "instruction": instruction,
+                }
+            )
 
         analysis = execute_analysis_skill(
             instruction,
@@ -160,6 +170,16 @@ def run_data_analyst(
                 reasoning=f"returncode={analysis.get('returncode')}",
             )
             result.rounds.append(ar)
+            if event_callback is not None:
+                event_callback(
+                    {
+                        "stage": "analysis_failed",
+                        "round": round_num,
+                        "instruction": instruction,
+                        "returncode": analysis.get("returncode"),
+                        "stderr": analysis.get("stderr"),
+                    }
+                )
             instruction = ar.judge.next_instruction
             continue
 
@@ -188,6 +208,17 @@ def run_data_analyst(
         ar.judge = decision
         result.rounds.append(ar)
         print(f"  [data_analyst] judge: ready={decision.ready}, reasoning={decision.reasoning[:100]}")
+        if event_callback is not None:
+            event_callback(
+                {
+                    "stage": "judge_done",
+                    "round": round_num,
+                    "instruction": instruction,
+                    "ready": decision.ready,
+                    "reasoning": decision.reasoning,
+                    "next_instruction": decision.next_instruction,
+                }
+            )
 
         if decision.ready:
             plan = _generate_feature_plan(goal, result.rounds, data_path=data_path, model=m, client=cli)
