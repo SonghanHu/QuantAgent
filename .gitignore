@@ -1,0 +1,106 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Pyre type checker
+.pyre/
+
+# mypy type checker
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# VS Code
+.vscode/
+
+# pyright type checker
+typings/
+
+# MacOS
+.DS_Store
+
+# dotenv environment variables file
+.env.local
+.env.*.local
+
+# Local test and development files
+*.log
+
+# Pandas DataFrame cache
+*.feather
+*.parquet
+
+# SQLite database
+*.sqlite3
+*.db
+data/*.db
+data/*.sqlite3
+data/analysis_runs/
+data/workspaces/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Matplotlib figures
+*.png
+*.svg
+*.pdf
