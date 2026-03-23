@@ -1,0 +1,132 @@
+"""
+Shared workspace for a single agent run.
+
+Every tool can read/write artifacts through the workspace so downstream tools
+automatically pick up upstream outputs (DataFrames, JSON configs, feature plans, etc.).
+
+Storage layout::
+
+    data/workspaces/<run_id>/
+    ├── manifest.json
+    ├── raw_data.parquet
+    ├── feature_plan.json
+    └── ...
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+from pydantic import BaseModel, Field
+
+
+class ArtifactMeta(BaseModel):
+    name: str
+    path: str
+    kind: str = Field(description="'dataframe' | 'json' | 'file'")
+    description: str = ""
+    shape: list[int] | None = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class Workspace:
+    """File-backed artifact store for one agent run."""
+
+    def __init__(self, root: Path | str, run_id: str | None = None) -> None:
+        self.run_id = run_id or uuid.uuid4().hex[:12]
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._manifest_path = self.root / "manifest.json"
+        self._manifest: dict[str, ArtifactMeta] = {}
+        if self._manifest_path.exists():
+            raw = json.loads(self._manifest_path.read_text())
+            self._manifest = {k: ArtifactMeta(**v) for k, v in raw.items()}
+
+    # ------------------------------------------------------------------
+    # DataFrame
+    # ------------------------------------------------------------------
+
+    def save_df(self, name: str, df: pd.DataFrame, *, description: str = "") -> Path:
+        path = self.root / f"{name}.parquet"
+        df.to_parquet(path, index=True)
+        self._manifest[name] = ArtifactMeta(
+            name=name,
+            path=str(path),
+            kind="dataframe",
+            description=description,
+            shape=[df.shape[0], df.shape[1]],
+        )
+        self._flush_manifest()
+        return path
+
+    def load_df(self, name: str) -> pd.DataFrame:
+        meta = self._manifest.get(name)
+        if meta is None:
+            raise KeyError(f"No artifact '{name}' in workspace; available: {list(self._manifest)}")
+        return pd.read_parquet(meta.path)
+
+    def has(self, name: str) -> bool:
+        return name in self._manifest
+
+    def df_path(self, name: str) -> Path:
+        meta = self._manifest.get(name)
+        if meta is None:
+            raise KeyError(f"No artifact '{name}'; available: {list(self._manifest)}")
+        return Path(meta.path)
+
+    # ------------------------------------------------------------------
+    # JSON
+    # ------------------------------------------------------------------
+
+    def save_json(self, name: str, data: Any, *, description: str = "") -> Path:
+        path = self.root / f"{name}.json"
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+        self._manifest[name] = ArtifactMeta(
+            name=name,
+            path=str(path),
+            kind="json",
+            description=description,
+        )
+        self._flush_manifest()
+        return path
+
+    def load_json(self, name: str) -> Any:
+        meta = self._manifest.get(name)
+        if meta is None:
+            raise KeyError(f"No artifact '{name}'; available: {list(self._manifest)}")
+        return json.loads(Path(meta.path).read_text())
+
+    # ------------------------------------------------------------------
+    # Introspection (for LLM context)
+    # ------------------------------------------------------------------
+
+    def list_artifacts(self) -> dict[str, dict[str, Any]]:
+        """Return a JSON-serialisable summary suitable for injecting into LLM prompts."""
+        out: dict[str, dict[str, Any]] = {}
+        for name, meta in self._manifest.items():
+            entry: dict[str, Any] = {"kind": meta.kind, "description": meta.description}
+            if meta.shape:
+                entry["shape"] = meta.shape
+            out[name] = entry
+        return out
+
+    def summary(self) -> str:
+        """One-line human-readable summary."""
+        items = [f"{n} ({m.kind})" for n, m in self._manifest.items()]
+        return f"Workspace({self.run_id}): {', '.join(items) or 'empty'}"
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _flush_manifest(self) -> None:
+        data = {k: v.model_dump() for k, v in self._manifest.items()}
+        self._manifest_path.write_text(json.dumps(data, indent=2, default=str))
+
+    def __repr__(self) -> str:
+        return self.summary()
