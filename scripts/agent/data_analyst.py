@@ -1,0 +1,237 @@
+"""
+Sub-agent: iterative data analysis → feature engineering plan.
+
+Loop:
+  1. run_data_analysis (skill-driven script)
+  2. LLM judges: enough insight for feature engineering?
+     - NO  → refine instruction, loop back to 1
+     - YES → emit FeaturePlan (structured output)
+
+Stops when the model says "ready" or ``max_rounds`` is hit.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+from typing import Any, Literal, cast
+
+from dotenv import load_dotenv
+from openai import OpenAI
+from pydantic import BaseModel, ConfigDict, Field
+
+from .analysis_skill import execute_analysis_skill
+
+
+class FeatureSpec(BaseModel):
+    name: str = Field(description="Column name to create")
+    logic: str = Field(description="Plain-English formula or pandas pseudo-code")
+    rationale: str = Field(description="Why this feature helps the target")
+
+
+class FeaturePlan(BaseModel):
+    """Final output: what features to build and why."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ready: bool = Field(description="True when analysis is sufficient")
+    features: list[FeatureSpec] = Field(default_factory=list)
+    target_column: str = Field(default="target", description="Column to predict")
+    notes: str | None = None
+
+
+class JudgeDecision(BaseModel):
+    """After each analysis round: continue or produce features."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ready: bool = Field(description="True = enough insight; False = need another round")
+    next_instruction: str = Field(
+        default="",
+        description="If not ready: what to investigate next. If ready: leave empty.",
+    )
+    reasoning: str = Field(default="", description="Brief justification")
+
+
+@dataclass
+class AnalysisRound:
+    round_num: int
+    instruction: str
+    result: dict[str, Any]
+    judge: JudgeDecision | None = None
+
+
+@dataclass
+class DataAnalystResult:
+    rounds: list[AnalysisRound] = field(default_factory=list)
+    feature_plan: FeaturePlan | None = None
+    stopped_reason: Literal["ready", "max_rounds", "error"] = "max_rounds"
+
+
+def _openai_client() -> OpenAI:
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY is not set.")
+    base = os.environ.get("OPENAI_BASE_URL")
+    kwargs: dict[str, Any] = {"api_key": key}
+    if base:
+        kwargs["base_url"] = base.rstrip("/")
+    return OpenAI(**kwargs)
+
+
+def _summarize_result(result: dict[str, Any], *, max_stdout: int = 3000) -> str:
+    """Compact text version of an analysis run for the judge prompt."""
+    parts: list[str] = []
+    s = result.get("summary")
+    if s:
+        parts.append("## summary.json\n" + json.dumps(s, indent=2, ensure_ascii=False, default=str)[:4000])
+    out = result.get("stdout", "")
+    if out:
+        parts.append("## stdout (tail)\n" + out[-max_stdout:])
+    err = result.get("stderr", "")
+    if err:
+        parts.append("## stderr (tail)\n" + err[-1500:])
+    parts.append(f"returncode={result.get('returncode')}")
+    return "\n\n".join(parts)
+
+
+def _history_digest(rounds: list[AnalysisRound], *, max_chars: int = 6000) -> str:
+    """Compressed earlier rounds so the judge has context without blowing token budget."""
+    lines: list[str] = []
+    for r in rounds:
+        lines.append(f"### Round {r.round_num}: {r.instruction[:120]}")
+        s = r.result.get("summary")
+        if isinstance(s, dict):
+            lines.append(json.dumps({k: v for k, v in s.items() if k in ("shape", "columns", "missing_pct", "notes", "error")}, ensure_ascii=False, default=str)[:1200])
+        if r.judge:
+            lines.append(f"  judge: ready={r.judge.ready}, reasoning={r.judge.reasoning[:200]}")
+        lines.append("")
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        return text[-max_chars:]
+    return text
+
+
+def run_data_analyst(
+    goal: str,
+    *,
+    data_path: str | None = None,
+    initial_instruction: str | None = None,
+    model: str | None = None,
+    client: OpenAI | None = None,
+    max_rounds: int = 4,
+    timeout_sec: int = 120,
+) -> DataAnalystResult:
+    """
+    Iterative sub-agent: analyze data until the model is confident enough to propose features.
+
+    Returns ``DataAnalystResult`` with all rounds, the final ``FeaturePlan``, and stop reason.
+    """
+    load_dotenv()
+    m = model or os.environ.get("OPENAI_SMALL_MODEL")
+    if not m:
+        raise RuntimeError("OPENAI_SMALL_MODEL is not set.")
+    cli = client or _openai_client()
+    result = DataAnalystResult()
+
+    instruction = initial_instruction or (
+        "First pass: report shape, dtypes, missing %, numeric describe, "
+        "and correlations with likely target columns. "
+        "Flag any data quality issues."
+    )
+
+    for round_num in range(1, max_rounds + 1):
+        print(f"  [data_analyst] round {round_num}: {instruction[:80]}...")
+
+        analysis = execute_analysis_skill(
+            instruction,
+            data_path=data_path,
+            model=m,
+            client=cli,
+            timeout_sec=timeout_sec,
+        )
+        ar = AnalysisRound(round_num=round_num, instruction=instruction, result=analysis)
+
+        if analysis.get("returncode") != 0:
+            ar.judge = JudgeDecision(
+                ready=False,
+                next_instruction="Previous script failed; simplify and retry.",
+                reasoning=f"returncode={analysis.get('returncode')}",
+            )
+            result.rounds.append(ar)
+            instruction = ar.judge.next_instruction
+            continue
+
+        history = _history_digest(result.rounds)
+        current = _summarize_result(analysis)
+
+        judge_system = (
+            "You are a quant research reviewer. "
+            "Given analysis results so far, decide: is there enough insight to propose features for modeling? "
+            "If yes, set ready=true. If no, write a specific next_instruction for the next analysis round."
+        )
+        judge_user = (
+            f"## Research goal\n\n{goal}\n\n"
+            + (f"## Earlier rounds\n\n{history}\n\n" if history.strip() else "")
+            + f"## Current round {round_num}\n\n{current}\n"
+        )
+        judge_resp = cli.chat.completions.parse(
+            model=m,
+            messages=[
+                {"role": "system", "content": judge_system},
+                {"role": "user", "content": judge_user},
+            ],
+            response_format=JudgeDecision,
+        )
+        decision = cast(JudgeDecision, judge_resp.choices[0].message.parsed)
+        ar.judge = decision
+        result.rounds.append(ar)
+        print(f"  [data_analyst] judge: ready={decision.ready}, reasoning={decision.reasoning[:100]}")
+
+        if decision.ready:
+            plan = _generate_feature_plan(goal, result.rounds, data_path=data_path, model=m, client=cli)
+            result.feature_plan = plan
+            result.stopped_reason = "ready"
+            return result
+
+        instruction = decision.next_instruction or "Dig deeper into the data."
+
+    if result.feature_plan is None:
+        plan = _generate_feature_plan(goal, result.rounds, data_path=data_path, model=m, client=cli)
+        result.feature_plan = plan
+    result.stopped_reason = "max_rounds"
+    return result
+
+
+def _generate_feature_plan(
+    goal: str,
+    rounds: list[AnalysisRound],
+    *,
+    data_path: str | None,
+    model: str,
+    client: OpenAI,
+) -> FeaturePlan:
+    history = _history_digest(rounds, max_chars=8000)
+    system = (
+        "Based on the data analysis rounds, propose concrete features for modeling. "
+        "Each feature needs a name, logic (pandas pseudo-code), and rationale. "
+        "Also specify which column is the target."
+    )
+    user = (
+        f"## Goal\n\n{goal}\n\n"
+        f"## Data path\n\n{data_path or 'synthetic'}\n\n"
+        f"## Analysis history\n\n{history}\n"
+    )
+    resp = client.chat.completions.parse(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        response_format=FeaturePlan,
+    )
+    parsed = resp.choices[0].message.parsed
+    if parsed is None:
+        return FeaturePlan(ready=True, features=[], notes="Model returned no plan.")
+    return cast(FeaturePlan, parsed)
