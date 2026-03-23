@@ -1,91 +1,365 @@
 # tools-research
 
-用 **uv** 管理的 Python 工作区：在搭一个「自然语言任务 → 拆解 → 选工具执行 → 落库」的 **研究型 agent 原型**。**数据**：`load_data` 可在提供 `tickers` 时用 **yfinance** 真拉行情。**训练**：`train_model` 使用 **scikit-learn**（可选模型、自选特征列、可选 `RandomizedSearchCV` 调参）；未提供 `data_path` 时用合成数据跑通管线。
+自然语言驱动的**研究型 Agent**——输入一句话目标，自动拆解子任务、路由工具、拉取数据、特征工程、建模回测，全程通过 **Real-time Dashboard** 实时可视化。
 
 ---
 
-## 环境
+## 架构总览
 
-- Python **3.12+**
-- [uv](https://docs.astral.sh/uv/)
+```
+┌───────────────────────────────────────────────────────────────────┐
+│  Browser  (React 19 + Tailwind v4 + Vite 8)                      │
+│                                                                   │
+│  GoalInput ──▶ POST /api/run ──▶ run_id                          │
+│  useAgentSocket ◀── WebSocket /ws/{run_id} ◀── EventBus          │
+│  ArtifactPanel ──▶ GET /api/workspace/{run_id}/{artifact}        │
+│  ProgressBar · LogPanel · ReportPanel                            │
+└──────────────────────────┬────────────────────────────────────────┘
+                           │  Vite proxy (dev) / 同端口 (prod)
+┌──────────────────────────▼────────────────────────────────────────┐
+│  FastAPI  (server/app.py)                                         │
+│                                                                   │
+│  POST /api/run ──▶ RunManager.start_run (daemon thread)          │
+│  WS   /ws/{run_id} ──▶ EventBus.subscribe(replay=True)          │
+│  GET  /api/workspace/… ──▶ Workspace.list_artifacts / load       │
+│  GET  /api/health                                                │
+│  Static: frontend/dist (prod) or proxy to :5173 (dev)            │
+└──────────────────────────┬────────────────────────────────────────┘
+                           │
+┌──────────────────────────▼────────────────────────────────────────┐
+│  Orchestration  (scripts/workflow_demo.py)                        │
+│                                                                   │
+│  decompose_task (LLM) ──▶ TaskBreakdown ──▶ topo sort            │
+│  for subtask in plan:                                            │
+│      resolve_subtask_tool (LLM / heuristic)                      │
+│      run_tool(tool_name, **kwargs)                               │
+│      emit events ──▶ EventBus ──▶ WebSocket ──▶ Browser          │
+│  save final state ──▶ SQLite + Workspace                         │
+└──────────────────────────┬────────────────────────────────────────┐
+                           │
+┌──────────────────────────▼────────────────────────────────────────┐
+│  Tool Layer  (scripts/tools/)                                     │
+│                                                                   │
+│  load_data ──▶ yfinance download ──▶ raw_data.parquet            │
+│  run_data_analyst ──▶ sub-agent loop (skill → judge → plan)      │
+│  build_features ──▶ feature_skill code-gen ──▶ engineered.parquet│
+│  train_model ──▶ sklearn pipeline ──▶ model metrics              │
+│  run_backtest / evaluate_strategy ──▶ (stub)                     │
+└──────────────────────────┬────────────────────────────────────────┘
+                           │
+┌──────────────────────────▼────────────────────────────────────────┐
+│  Persistence                                                      │
+│                                                                   │
+│  Workspace: data/workspaces/{run_id}/                            │
+│    ├── manifest.json                                              │
+│    ├── raw_data.parquet                                           │
+│    ├── feature_plan.json                                          │
+│    └── engineered_data.parquet                                    │
+│  SQLite: data/agent.db  (runs + log_entries)                     │
+│  Skills output: data/analysis_runs/ · data/feature_runs/         │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 技术栈
+
+| 层       | 技术                          | 版本       |
+|----------|-------------------------------|------------|
+| Frontend | React, TypeScript, Tailwind   | 19 / 5.9 / 4.2 |
+| Build    | Vite                          | 8.0        |
+| Backend  | FastAPI, Uvicorn              | 0.135+ / 0.42+ |
+| LLM      | OpenAI (structured output)    | SDK 2.29+  |
+| Data     | pandas, numpy, pyarrow, yfinance | 3.0 / 2.4 / 23 / 1.2 |
+| ML       | scikit-learn                  | 1.8+       |
+| Storage  | SQLite, Parquet, JSON         | —          |
+| 包管理    | uv (Python), npm (Frontend)   | —          |
+
+---
+
+## 目录结构
+
+```
+.
+├── frontend/                   # React SPA
+│   ├── src/
+│   │   ├── App.tsx             # 主页面：提交目标、显示进度/日志/产物/报告
+│   │   ├── hooks/
+│   │   │   └── useAgentSocket.ts   # WebSocket 连接 + 事件流
+│   │   ├── components/
+│   │   │   ├── GoalInput.tsx       # 目标输入 + 启动按钮
+│   │   │   ├── ProgressBar.tsx     # 子任务进度条 + 连接状态
+│   │   │   ├── LogPanel.tsx        # 实时事件日志
+│   │   │   ├── ArtifactPanel.tsx   # Workspace 产物浏览 + 预览
+│   │   │   └── ReportPanel.tsx     # 最终报告
+│   │   └── types.ts            # AgentEvent, WorkspaceManifest, ArtifactPreview
+│   ├── vite.config.ts          # 开发代理：/api → :8000, /ws → ws://:8000
+│   └── dist/                   # 生产构建（FastAPI 直接 serve）
+│
+├── server/                     # FastAPI 后端
+│   ├── app.py                  # HTTP API + WebSocket + 静态文件
+│   └── agent_runner.py         # RunManager：线程池运行 agent
+│
+├── scripts/                    # Agent 核心逻辑
+│   ├── workflow_demo.py        # 端到端编排：拆解 → 拓扑序执行 → 落库
+│   ├── dashboard_dev.py        # 一键启动前后端 dev server
+│   ├── agent/
+│   │   ├── models.py           # Subtask, TaskBreakdown (Pydantic)
+│   │   ├── state.py            # AgentState, ExecutionRecord
+│   │   ├── events.py           # EventBus：线程安全的 pub/sub + replay
+│   │   ├── workspace.py        # Workspace：parquet/JSON 产物管理
+│   │   ├── executor.py         # run_subtask：路由 → 调工具 → 记录
+│   │   ├── tool_routing.py     # LLM 路由 SubtaskToolChoice + 关键词回退
+│   │   ├── subtask_heuristic.py# 关键词匹配兜底
+│   │   ├── analysis_skill.py   # LLM 生成 EDA 脚本 + subprocess 执行
+│   │   ├── feature_skill.py    # LLM 生成特征工程脚本 + subprocess 执行
+│   │   ├── data_analyst.py     # 子 agent 循环：分析 → 裁判 → 特征计划
+│   │   └── plan_revision.py    # revise_plan (预留 NotImplementedError)
+│   ├── llm/
+│   │   ├── task_decompose.py   # NL → TaskBreakdown (OpenAI structured output)
+│   │   └── yfinance_spec.py    # NL → YFinanceFetchSpec
+│   ├── tools/
+│   │   ├── __init__.py         # TOOL_REGISTRY + run_tool + list_tools
+│   │   ├── data.py             # load_data (yfinance)
+│   │   ├── data_spec.py        # YFinanceFetchSpec
+│   │   ├── analysis.py         # run_data_analysis
+│   │   ├── data_analyst_tool.py# run_data_analyst
+│   │   ├── features.py         # build_features
+│   │   ├── regressor.py        # train_model (sklearn)
+│   │   ├── backtest.py         # run_backtest (stub)
+│   │   └── evaluation.py       # evaluate_strategy (stub)
+│   ├── storage/
+│   │   └── agent_log_db.py     # SQLite: runs + log_entries
+│   └── docs/
+│       ├── tools.md            # 工具目录（LLM 路由用）
+│       └── yfinance_guide.md   # yfinance 说明书
+│
+├── skills/                     # Markdown 技能描述（喂给 LLM 生成脚本）
+│   ├── data_analysis.md
+│   └── feature_engineering.md
+│
+├── data/                       # 运行时数据（不进版本库）
+│   ├── agent.db                # SQLite 日志
+│   ├── workspaces/{run_id}/    # 每次运行的产物
+│   ├── analysis_runs/{id}/     # EDA 脚本 + 结果
+│   └── feature_runs/{id}/      # 特征工程脚本 + 结果
+│
+├── pyproject.toml              # Python 依赖 (uv)
+└── .env.example                # 环境变量模板
+```
+
+---
+
+## 快速开始
+
+### 1. 环境准备
 
 ```bash
+# Python 依赖
 uv sync
-cp .env.example .env   # 填入 OPENAI_API_KEY、OPENAI_SMALL_MODEL 等
+
+# 前端依赖
+cd frontend && npm install && cd ..
+
+# 环境变量
+cp .env.example .env
+# 编辑 .env，填入 OPENAI_API_KEY 等
 ```
 
-主要依赖：`openai`、`pydantic`、`python-dotenv`、`yfinance`、`numpy` / `pandas` / `matplotlib`（数值与画图预留）。
+### 2. 启动 Dashboard（开发模式）
 
----
-
-## 当前做到哪一步
-
-| 能力 | 状态 |
-|------|------|
-| **任务拆解** | NL → `TaskBreakdown`（子任务 + 依赖），`scripts/llm/task_decompose.py`，small model + 结构化输出 |
-| **运行时状态** | `AgentState` / `ExecutionRecord`，含 `plan_version`、`replan_triggers` 占位 |
-| **工具注册** | `scripts/tools/` 下分文件实现，`run_tool` + `scripts/docs/tools.md`（给路由 / ReAct 用） |
-| **数据（yfinance）** | `docs/yfinance_guide.md` 给 LLM 作说明书；模型只填结构化 `YFinanceFetchSpec`，由固定代码 `yf.download` 执行（避免每次手写不同脚本）。辅助：`llm/yfinance_spec.py` 的 `infer_yfinance_spec` |
-| **数据分析（skill + 代码）** | `skills/data_analysis.md` + `run_data_analysis`：small model **生成可执行脚本**，写入 `data/analysis_runs/<id>/` 并 **subprocess 运行**，产出 `summary.json`（建模前 EDA） |
-| **子任务 → 工具** | small model 读截断版 `tools.md`，输出 `tool_name` + `kwargs_json`，校验失败重试后 **关键词回退**（`agent/tool_routing.py`） |
-| **执行** | `agent/executor.py`：`run_subtask` 写执行日志 |
-| **端到端 demo** | `scripts/workflow_demo.py`：拆解 → 拓扑序执行子任务 → 可选写 SQLite |
-| **日志库** | SQLite：`storage/agent_log_db.py`，默认 `data/agent.db`（`AGENT_DB_PATH` 可改） |
-| **中途改计划** | **仅预留**：`agent/plan_revision.py` 里 `revise_plan(...)` 仍为 `NotImplementedError` |
-
----
-
-## `scripts/` 目录（简要）
-
-```
-skills/                 # Agent skills（如 data_analysis.md → LLM 写脚本 + 执行）
-scripts/
-  workflow_demo.py      # 一键跑通流水线
-  agent/                # 模型、状态、执行、路由、analysis_skill、replan 占位
-  llm/                  # task_decompose, yfinance_spec（说明书 → 结构化参数）
-  storage/              # SQLite
-  tools/                # 工具实现 + 注册表（含 run_data_analysis）
-  docs/tools.md         # 工具说明（路由 prompt 用）
-  docs/yfinance_guide.md
-```
-
-运行示例：
+**方式一：一键启动**
 
 ```bash
-# 端到端（会调多次 API；默认写库，加 --no-db 可关）
-uv run python scripts/workflow_demo.py "你的研究目标描述"
+uv run python scripts/dashboard_dev.py
+```
+
+同时启动：
+- 后端 `http://127.0.0.1:8000`（FastAPI + Uvicorn）
+- 前端 `http://127.0.0.1:5173`（Vite dev server，自动代理 `/api` 和 `/ws` 到后端）
+
+打开浏览器访问 `http://127.0.0.1:5173`。
+
+**方式二：分别启动**
+
+```bash
+# 终端 1：后端
+uv run uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
+
+# 终端 2：前端
+cd frontend && npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+### 3. 生产模式（单端口）
+
+```bash
+# 构建前端
+cd frontend && npm run build && cd ..
+
+# 启动后端（自动 serve frontend/dist）
+uv run uvicorn server.app:app --host 0.0.0.0 --port 8000
+```
+
+访问 `http://localhost:8000`，前后端同端口，无需代理。
+
+### 4. 仅 CLI（无 UI）
+
+```bash
+# 端到端执行（调用 LLM、拉数据、训练等）
+uv run python scripts/workflow_demo.py "下载 SPY 近一年日线，分析、特征工程、训练 Ridge 回归、回测评估"
 
 # 只拆解任务
-uv run python scripts/llm/task_decompose.py "你的研究目标描述"
+uv run python scripts/llm/task_decompose.py "你的研究目标"
 
-# 根据自然语言 + yfinance 说明书，生成拉数参数（JSON）
+# 生成 yfinance 参数
 uv run python scripts/llm/yfinance_spec.py "拉标普500 ETF 近两年日线"
 ```
 
-**注意：** 执行 `scripts/` 下入口时，需保证 **`scripts` 在 `sys.path` 里**。从仓库根用上面命令时，Python 会把 `scripts/` 设为脚本所在目录的父级相关路径；`llm/task_decompose.py` 内对子目录直接运行做了 `sys.path` 修补。
+---
+
+## 数据流
+
+```
+用户输入目标
+    │
+    ▼
+POST /api/run { goal }
+    │
+    ▼
+RunManager.start_run ──▶ 开启 daemon thread
+    │
+    ▼
+workflow_demo.run_workflow
+    ├── 创建 Workspace (data/workspaces/{run_id}/)
+    ├── 可选创建 SQLite run 记录
+    ├── emit("run_start")
+    │
+    ├── decompose_task (OpenAI structured output)
+    │   └── TaskBreakdown { subtasks[], dependencies }
+    │   └── emit("decompose_done")
+    │
+    ├── 拓扑排序 subtasks
+    │   └── emit("workflow_topo_order")
+    │
+    ├── for each subtask:
+    │   ├── emit("subtask_start")
+    │   ├── resolve_subtask_tool (LLM / 关键词回退)
+    │   │   └── emit("subtask_tool_resolved")
+    │   ├── run_tool(tool_name, **kwargs)
+    │   │   └── 工具可读写 Workspace (parquet/JSON)
+    │   ├── emit("subtask_done")
+    │   └── emit("workspace_update") if artifacts changed
+    │
+    └── emit("run_done") ──▶ WebSocket 关闭
+                               │
+                               ▼
+                    前端刷新 workspace manifest
+                    显示最终报告
+```
 
 ---
 
-## 还缺什么 / 建议下一步
+## 事件系统
 
-1. **真实量化工具**：把 `tools/*.py` 换成真实数据加载、特征、训练、回测；接口尽量保持 `TOOL_REGISTRY` 名字稳定。
-2. **`revise_plan` 实现**：子任务失败、Sharpe/回撤不达标、数据缺失、要加 robustness 时，用 LLM 生成新 `TaskBreakdown`，并在 `workflow_demo`（或未来主循环）里接上分支 + `plan_version` 递增。
-3. **完整 ReAct 循环**：现在是「按计划拓扑执行 + 每步路由」；若要做 Thought → Action → Observation 多轮，可把 LLM 步与 `AgentState` 更新再包一层。
-4. **指标驱动的迭代**：例如 Sharpe &lt; 阈值自动换特征族 / 重跑——需在 `artifacts` 或工具输出里约定指标结构，再写决策逻辑（或第二个 small model）。
-5. **报告生成**：从 `AgentState` + `execution_log` 生成最终研究结论（模板 / LLM 摘要）。
-6. **工程化**：`pyproject` 里把 `scripts` 收成可安装包或统一 `python -m` 入口、单测、CI；`.env` 格式问题若出现需自行检查（dotenv 对非法行会告警）。
+`EventBus`（`scripts/agent/events.py`）是前后端实时通信的核心：
+
+- **线程安全**：`Lock` 保护 history 和 subscriber 列表
+- **发布**：`emit(event_type, **payload)` → 追加 history + 推入所有 subscriber queue
+- **订阅**：`subscribe(replay=True)` → 返回 `(id, queue, history)`，新连接可回放已有事件
+- **WebSocket 桥接**：`server/app.py` 中 `asyncio.to_thread(queue.get)` 将阻塞队列转为异步推送
+
+**事件类型**：
+
+| 事件 | 触发时机 | 关键字段 |
+|------|----------|----------|
+| `run_start` | 运行开始 | `run_id`, `goal` |
+| `decompose_done` | 任务拆解完成 | `total_subtasks`, `subtasks` |
+| `workflow_topo_order` | 拓扑排序完成 | `order` |
+| `subtask_start` | 子任务开始 | `subtask_title` |
+| `subtask_tool_resolved` | 工具路由完成 | `tool_name`, `kwargs` |
+| `subtask_done` | 子任务完成 | `status`, `summary` |
+| `workspace_update` | 产物变化 | `artifact_name` |
+| `run_done` | 运行结束 | `status`, `workspace_summary` |
 
 ---
 
-## 依赖与加包
+## Workspace 产物系统
+
+每次运行在 `data/workspaces/{run_id}/` 下创建独立目录：
+
+- **`manifest.json`**：记录所有产物的元信息（名称、类型、描述、shape、时间戳）
+- **产物类型**：`dataframe`（`.parquet`）、`json`（`.json`）、`file`（其他）
+- **API 访问**：
+  - `GET /api/workspace/{run_id}` → manifest + 产物列表
+  - `GET /api/workspace/{run_id}/{name}` → JSON 内容或 DataFrame 前 20 行预览
+- **工具集成**：`executor.py` 自动将 `Workspace` 注入工具函数签名中含 `workspace` 参数的工具
+
+---
+
+## 工具系统
+
+| 工具名 | 功能 | 读写 Workspace |
+|--------|------|----------------|
+| `load_data` | yfinance 下载行情数据 | 写 `raw_data` |
+| `run_data_analysis` | EDA 技能（LLM 生成脚本 + subprocess） | 读 `raw_data` |
+| `run_data_analyst` | 子 agent 循环：分析 → 裁判 → 生成特征计划 | 写 `feature_plan` |
+| `build_features` | 特征工程（LLM 生成脚本 + subprocess） | 读 `raw_data` + `feature_plan`，写 `engineered_data` |
+| `train_model` | sklearn 训练（Ridge / RF / 可选 RandomizedSearchCV） | 读 workspace 数据 |
+| `run_backtest` | 回测（stub） | — |
+| `evaluate_strategy` | 策略评估（stub） | — |
+
+**注册**：`scripts/tools/__init__.py` 的 `TOOL_REGISTRY` 字典。
+
+**路由**：`tool_routing.py` 用 LLM 读 `docs/tools.md` 选择工具 + 参数，校验失败时回退到 `subtask_heuristic.py` 的关键词匹配。
+
+**注入**：`executor.py` 通过 `inspect.signature` 自动注入 `workspace` 和 `event_callback` 参数。
+
+---
+
+## LLM 集成
+
+- **客户端**：OpenAI Python SDK，支持自定义 `OPENAI_BASE_URL`
+- **模型**：通过 `OPENAI_SMALL_MODEL` 配置（默认 `gpt-5.4-nano`）
+- **模式**：全部使用 `chat.completions.parse` + Pydantic `response_format`（结构化输出）
+- **用途**：
+  - `decompose_task` → `TaskBreakdown`
+  - `resolve_subtask_tool` → `SubtaskToolChoice`
+  - `infer_yfinance_spec` → `YFinanceFetchSpec`
+  - `analysis_skill` / `feature_skill` → 生成 Python 脚本（denylist 安全校验 + subprocess 执行）
+  - `data_analyst` 子 agent → `JudgeDecision` + `FeaturePlan`
+
+---
+
+## 环境变量
 
 ```bash
-uv add <package>
+# 必填
+OPENAI_API_KEY=sk-...
+
+# 可选
+OPENAI_BASE_URL=https://api.openai.com/v1   # 自定义端点
+OPENAI_SMALL_MODEL=gpt-5.4-nano             # 路由/拆解用的小模型
+ANTHROPIC_API_KEY=...                        # Anthropic 备用
+AGENT_DB_PATH=./data/agent.db                # SQLite 路径
 ```
+
+---
+
+## 还在做 / 下一步
+
+| 方向 | 状态 |
+|------|------|
+| 中途改计划 `revise_plan` | 预留接口，尚未实现 |
+| 回测 / 评估工具 | stub，需接入真实逻辑 |
+| 完整 ReAct 循环 | 当前为计划式执行，多轮推理待扩展 |
+| 指标驱动迭代 | Sharpe < 阈值自动换特征 / 重跑 |
+| 报告生成 | 从 execution_log 生成研究报告 |
+| 测试与 CI | 待补充 |
 
 ---
 
 ## 数据与密钥
 
-- 不要把 `.env` 或 `data/*.db` 提交进版本库（已在 `.gitignore` 中忽略常见项）。
-- 数据库表：`runs`（用户输入、计划、最终状态）、`log_entries`（分类型事件与 JSON payload）。
+- **不要**把 `.env`、`data/agent.db`、`data/workspaces/` 提交进版本库
+- SQLite 表：`runs`（目标、计划、最终状态）、`log_entries`（分类型事件 + JSON payload）
+- 加包：`uv add <package>`（Python）、`cd frontend && npm install <package>`（前端）
