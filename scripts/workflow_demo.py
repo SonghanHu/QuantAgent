@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from agent.events import EventBus
 from agent.executor import run_subtask
 from agent.models import Subtask
+from agent.report_gen import generate_report
 from agent.state import AgentState
 from agent.workspace import Workspace
 from llm.task_decompose import decompose_task
@@ -201,7 +202,25 @@ def run_workflow(
         set_run_status(conn, run_id, "failed" if failed else "done")
         conn.close()
 
-    log("=== 4. Final AgentState ===\n")
+    log("=== 4. Generate final report ===\n")
+    report: dict[str, Any] | None = None
+    try:
+        if event_bus is not None:
+            event_bus.emit("report_generating", run_id=resolved_app_run_id)
+        report = generate_report(state, ws, model=model)
+        log(f"Report: {report.get('title', '?')}\n")
+        if event_bus is not None:
+            event_bus.emit(
+                "workspace_update",
+                run_id=resolved_app_run_id,
+                artifact_name="final_report",
+                artifact=ws.list_artifacts().get("final_report", {}),
+            )
+    except Exception as exc:  # noqa: BLE001
+        log(f"Report generation failed: {exc}\n")
+        report = None
+
+    log("=== 5. Final AgentState ===\n")
     log(state.model_dump_json(indent=2, ensure_ascii=False))
     log(f"\n=== Workspace artifacts: {ws.summary()} ===\n")
     if run_id is not None:
@@ -215,6 +234,7 @@ def run_workflow(
             final_state=state.model_dump(mode="json"),
             workspace_dir=str(ws.root),
             workspace_summary=ws.summary(),
+            report=report,
         )
     return {
         "exit_code": 0 if not failed else 2,
