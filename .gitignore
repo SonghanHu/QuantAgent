@@ -94,6 +94,7 @@ typings/
 data/*.db
 data/*.sqlite3
 data/analysis_runs/
+data/backtest_runs/
 data/feature_runs/
 data/workspaces/
 
