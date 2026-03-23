@@ -3,7 +3,7 @@ End-to-end demo: NL goal → decompose → topo-order subtasks → LLM tool rout
 
 Run from repo root:
 
-    uv run python scripts/workflow_demo.py "你的任务描述"
+    uv run python scripts/workflow_demo.py "your natural-language goal"
 """
 
 from __future__ import annotations
@@ -257,7 +257,8 @@ def main() -> int:
         "goal",
         nargs="*",
         default=[
-            "期货周频动量研究：加载数据、建特征、线性回归训练、回测，最后给出评估结论（关注Sharpe和回撤）。"
+            "Weekly futures momentum study: load data, engineer features, train a linear regression, backtest, "
+            "then evaluate (focus on Sharpe and max drawdown)."
         ],
         help="Natural-language goal",
     )

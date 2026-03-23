@@ -29,7 +29,7 @@ Skip steps only if the subtask clearly does not need them (e.g. pure reporting m
 ## `load_data`
 
 - **What it does:** If **`tickers`** is set → downloads OHLCV via **yfinance** (one fixed code path). If omitted → small **demo stub** for pipeline tests.
-- **When to use:** Subtask mentions data ingestion, symbols, Yahoo, prices, returns, universe, “拉数据”, etc.
+- **When to use:** Subtask mentions data ingestion, symbols, Yahoo, prices, returns, universe, fetching data, etc.
 - **Arguments (yfinance path):**
   - `tickers`: string (comma-separated) or list, e.g. `"SPY"` or `"SPY,TLT"` or `GC=F`
   - `period`: e.g. `1y`, `2y`, `max` (used when `start`/`end` not set)
@@ -77,7 +77,7 @@ Skip steps only if the subtask clearly does not need them (e.g. pure reporting m
 ## `build_features`
 
 - **What it does:** Reads `feature_plan` and `raw_data` from workspace, uses `skills/feature_engineering.md` to generate and execute a Python script that computes the planned features. Saves the enriched DataFrame as `engineered_data` in workspace.
-- **When to use:** After `run_data_analyst` has produced a feature plan. Subtask mentions features, factors, signals, engineering, 特征工程.
+- **When to use:** After `run_data_analyst` has produced a feature plan. Subtask mentions features, factors, signals, feature engineering.
 - **Arguments:**
   - `workspace`: auto-injected. Must contain `raw_data` and `feature_plan` artifacts.
   - `timeout_sec`: per-script subprocess timeout (default `120`).
@@ -89,7 +89,7 @@ Skip steps only if the subtask clearly does not need them (e.g. pure reporting m
 ## `train_model`
 
 - **What it does:** **scikit-learn** regression: Pipeline(imputer → scaler → estimator). You choose model, feature columns, and optional tuning.
-- **When to use:** Training / fitting / 回归 / 调参 / cross-validation.
+- **When to use:** Training / fitting / regression / hyperparameter tuning / cross-validation.
 - **Arguments:**
   - `model_name`: `linear_regression`, `ridge`, `lasso`, `elasticnet`, `random_forest`, `gradient_boosting`, `svr` (aliases `lr`, `rf`, `gbm`, `gbr`, `enet`, …)
   - `feature_columns`: list or comma-separated string; **omit** to use all numeric columns except `target_column`
@@ -106,7 +106,7 @@ Skip steps only if the subtask clearly does not need them (e.g. pure reporting m
 ## `run_backtest`
 
 - **What it does:** **Skill-driven backtest sub-agent.** Reads `engineered_data` (or `raw_data`) and `model_output` from workspace. An LLM generates a complete backtest script from `skills/backtest.md`, respecting structured **hyperparameters** (strategy type, rebalance frequency, position sizing, transaction costs, etc.). The script re-trains the model on an in-sample window, generates out-of-sample predictions, converts to signals, and computes PnL / risk metrics. Saves `backtest_results` to workspace.
-- **When to use:** After `train_model`. Subtask mentions backtest, Sharpe, drawdown, turnover, PnL, 回测, 净值, risk metrics.
+- **When to use:** After `train_model`. Subtask mentions backtest, Sharpe, drawdown, turnover, PnL, equity curve, risk metrics.
 - **Arguments (hyperparameters):**
   - `strategy_type`: `"long_only"` (default) | `"long_short"` — whether the strategy can short
   - `rebalance_freq`: `"daily"` (default) | `"weekly"` | `"monthly"` — rebalance cadence
@@ -125,7 +125,7 @@ Skip steps only if the subtask clearly does not need them (e.g. pure reporting m
 ## `evaluate_strategy`
 
 - **What it does:** **LLM-driven evaluation.** Reads `backtest_results`, `model_output`, and optionally `feature_plan` from workspace. A senior quant reviewer LLM produces a structured `StrategyVerdict` with overall rating, strengths, weaknesses, risk assessment, and concrete next steps. Saves `evaluation` to workspace.
-- **When to use:** After `run_backtest`. Subtask mentions evaluation, summary, conclusion, verdict, next steps, robustness, 结论, 总结, 评估.
+- **When to use:** After `run_backtest`. Subtask mentions evaluation, summary, conclusion, verdict, next steps, robustness.
 - **Arguments:**
   - `workspace`: auto-injected; should contain `backtest_results` and/or `model_output`
   - `model`: optional LLM model override

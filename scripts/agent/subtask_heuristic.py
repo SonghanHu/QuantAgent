@@ -16,18 +16,28 @@ def subtask_to_tool_name(subtask: Subtask) -> str:
     Order: more specific phrases before generic ones.
     """
     t = _text(subtask)
-    if any(k in t for k in ("回测", "sharpe", "drawdown", "turnover", "pnl", "净值", "backtest")):
+    if any(
+        k in t
+        for k in (
+            "backtest",
+            "sharpe",
+            "drawdown",
+            "turnover",
+            "pnl",
+            "equity",
+            "nav",
+        )
+    ):
         return "run_backtest"
     if any(
         k in t
         for k in (
-            "数据分析并建特征",
-            "分析数据然后特征",
             "iterative analysis",
-            "分析+特征",
             "data analyst",
             "analyze and engineer",
             "analyze then feature",
+            "analysis then feature",
+            "eda then feature",
         )
     ):
         return "run_data_analyst"
@@ -36,30 +46,69 @@ def subtask_to_tool_name(subtask: Subtask) -> str:
         for k in (
             "eda",
             "exploratory",
-            "数据探索",
-            "描述性统计",
-            "数据质量",
-            "缺失值",
+            "data quality",
+            "missing",
             "profiling",
-            "相关性",
-            "分布",
-            "histogram",
             "correlation",
+            "distribution",
+            "histogram",
+            "descriptive stats",
             "data analysis",
             "analyze the data",
             "explore data",
         )
     ):
         return "run_data_analysis"
-    if any(k in t for k in ("训练", "拟合", "模型", "回归", "train", "regression", "fit", "estimate")):
+    if any(
+        k in t
+        for k in (
+            "train",
+            "training",
+            "regression",
+            "fit model",
+            "fit a",
+            "estimate",
+            "sklearn",
+        )
+    ):
         return "train_model"
     if any(
         k in t
-        for k in ("特征", "因子", "feature", "factor", "momentum", "signal", "工程", "构建因子")
+        for k in (
+            "feature",
+            "factor",
+            "momentum",
+            "signal",
+            "engineer features",
+            "build features",
+        )
     ):
         return "build_features"
-    if any(k in t for k in ("数据", "加载", "dataset", "universe", "panel", "load data", "csv")):
+    if any(
+        k in t
+        for k in (
+            "load data",
+            "download",
+            "dataset",
+            "universe",
+            "panel",
+            "csv",
+            "yfinance",
+            "yahoo",
+        )
+    ):
         return "load_data"
-    if any(k in t for k in ("评估", "结论", "总结", "报告", "下一步", "evaluate", "verdict", "robustness")):
+    if any(
+        k in t
+        for k in (
+            "evaluate",
+            "evaluation",
+            "verdict",
+            "robustness",
+            "conclusion",
+            "summary report",
+            "next steps",
+        )
+    ):
         return "evaluate_strategy"
     return "evaluate_strategy"
