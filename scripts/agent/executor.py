@@ -78,7 +78,13 @@ def run_subtask(
             if k
             in (
                 "sharpe",
+                "max_drawdown",
+                "total_return",
+                "annual_return",
+                "win_rate",
                 "verdict",
+                "overall_rating",
+                "deploy_ready",
                 "dataset",
                 "model",
                 "train_r2",
@@ -86,6 +92,8 @@ def run_subtask(
                 "test_rmse",
                 "returncode",
                 "run_id",
+                "stopped_reason",
+                "workspace_artifact",
             )
         ]
         summary = ", ".join(summary_bits) if summary_bits else "ok"

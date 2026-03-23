@@ -261,7 +261,7 @@ def train_model(
     test_r2 = float(r2_score(y_test, pred_te))
     test_rmse = float(np.sqrt(mean_squared_error(y_test, pred_te)))
 
-    return {
+    result = {
         "model": key,
         "tune_hyperparameters": bool(tune_hyperparameters),
         "tune_ignored": tune_ignored,
@@ -279,3 +279,13 @@ def train_model(
         "n_train": int(len(X_train)),
         "n_test": int(len(X_test)),
     }
+
+    if workspace is not None:
+        workspace.save_json(
+            "model_output",
+            result,
+            description=f"Training results for {key} model",
+        )
+        result["workspace_artifact"] = "model_output"
+
+    return result

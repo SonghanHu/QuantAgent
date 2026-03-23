@@ -10,7 +10,9 @@ The small-model router (`agent.tool_routing.resolve_subtask_tool`) reads this ca
 - `run_data_analysis` / `run_data_analyst` / `train_model` → auto-resolve `data_path` from `raw_data` when not explicitly set
 - `run_data_analyst` → saves `feature_plan.json`
 - `build_features` → reads `raw_data` + `feature_plan`, saves `engineered_data.parquet`
-- `train_model` → can also read from `engineered_data` (when `data_path` not set)
+- `train_model` → reads from `engineered_data` (or `raw_data`), saves `model_output.json`
+- `run_backtest` → reads `engineered_data` (or `raw_data`) + `model_output`, saves `backtest_results.json`
+- `evaluate_strategy` → reads `backtest_results` + `model_output` + `feature_plan`, saves `evaluation.json`
 
 You do **not** need to pass `data_path` explicitly when the upstream `load_data` has already run — the workspace handles artifact flow.
 
@@ -103,21 +105,32 @@ Skip steps only if the subtask clearly does not need them (e.g. pure reporting m
 
 ## `run_backtest`
 
-- **What it does:** Simulates PnL and risk stats (**stub** — will become a sub-agent that generates a backtest script from workspace artifacts).
-- **When to use:** Subtask mentions backtest, Sharpe, drawdown, turnover, 回测, 净值.
-- **Arguments:** `workspace`: auto-injected (not yet used by stub).
-- **Returns:** `{ "sharpe", "max_drawdown", "turnover", "stub": true }`.
-- **ReAct example:** *Thought: Need performance metrics.* → *Action: run_backtest* with `{}`.
+- **What it does:** **Skill-driven backtest sub-agent.** Reads `engineered_data` (or `raw_data`) and `model_output` from workspace. An LLM generates a complete backtest script from `skills/backtest.md`, respecting structured **hyperparameters** (strategy type, rebalance frequency, position sizing, transaction costs, etc.). The script re-trains the model on an in-sample window, generates out-of-sample predictions, converts to signals, and computes PnL / risk metrics. Saves `backtest_results` to workspace.
+- **When to use:** After `train_model`. Subtask mentions backtest, Sharpe, drawdown, turnover, PnL, 回测, 净值, risk metrics.
+- **Arguments (hyperparameters):**
+  - `strategy_type`: `"long_only"` (default) | `"long_short"` — whether the strategy can short
+  - `rebalance_freq`: `"daily"` (default) | `"weekly"` | `"monthly"` — rebalance cadence
+  - `position_sizing`: `"equal_weight"` | `"signal_proportional"` (default) | `"volatility_scaled"`
+  - `transaction_cost_bps`: float, default `5.0` — round-trip cost in basis points
+  - `max_position_pct`: float 0–1, default `1.0` — max portfolio fraction per position
+  - `initial_capital`: float, default `1000000`
+  - `train_ratio`: float 0.1–1.0, default `0.7` — in-sample fraction
+  - `timeout_sec`: script execution timeout (default `180`)
+  - `workspace`: auto-injected; must contain `model_output` and data
+- **Returns:** `sharpe`, `max_drawdown`, `total_return`, `annual_return`, `win_rate`, `n_test_days`, plus script execution details. Saves `backtest_results` JSON to workspace.
+- **ReAct example:** *Thought: Need long-short daily backtest with 10bps costs.* → *Action: run_backtest* with `{ "strategy_type": "long_short", "transaction_cost_bps": 10, "train_ratio": 0.7 }`.
 
 ---
 
 ## `evaluate_strategy`
 
-- **What it does:** High-level verdict and suggested next step (stub).
-- **When to use:** Subtask mentions summary, conclusion, next steps, robustness, 结论, 总结.
-- **Arguments:** none (stub).
-- **Returns:** `{ "verdict", "next_step" }`.
-- **ReAct example:** *Thought: Enough numbers; interpret.* → *Action: evaluate_strategy* with `{}`.
+- **What it does:** **LLM-driven evaluation.** Reads `backtest_results`, `model_output`, and optionally `feature_plan` from workspace. A senior quant reviewer LLM produces a structured `StrategyVerdict` with overall rating, strengths, weaknesses, risk assessment, and concrete next steps. Saves `evaluation` to workspace.
+- **When to use:** After `run_backtest`. Subtask mentions evaluation, summary, conclusion, verdict, next steps, robustness, 结论, 总结, 评估.
+- **Arguments:**
+  - `workspace`: auto-injected; should contain `backtest_results` and/or `model_output`
+  - `model`: optional LLM model override
+- **Returns:** `verdict` (`strong` | `promising` | `weak` | `failed`), `summary`, `strengths`, `weaknesses`, `risk_assessment`, `next_steps`, `deploy_ready`. Saves `evaluation` JSON to workspace.
+- **ReAct example:** *Thought: Backtest done, need to interpret results.* → *Action: evaluate_strategy* with `{}`.
 
 ---
 
