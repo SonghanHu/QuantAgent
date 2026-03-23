@@ -5,6 +5,7 @@ import { GoalInput } from './components/GoalInput'
 import { LogPanel } from './components/LogPanel'
 import { ProgressBar } from './components/ProgressBar'
 import { ReportPanel } from './components/ReportPanel'
+import { WorkflowGraph } from './components/WorkflowGraph'
 import { useAgentSocket } from './hooks/useAgentSocket'
 import type { AgentEvent, ArtifactPreview, WorkspaceManifest } from './types'
 
@@ -19,7 +20,6 @@ function App() {
   const [preview, setPreview] = useState<ArtifactPreview | null>(null)
   const [isStarting, setIsStarting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [statusMessage, setStatusMessage] = useState<string>('Ready')
   const { events, connectionStatus } = useAgentSocket(runId)
   const latestEvent = events.at(-1) ?? null
 
@@ -57,26 +57,15 @@ function App() {
       .then((response) => response.json())
       .then((data: WorkspaceManifest) => {
         setManifest(data)
-        setStatusMessage(`Workspace updated: ${Object.keys(data.artifacts).length} artifact(s)`)
       })
       .catch((error: unknown) => {
         setErrorMessage(error instanceof Error ? error.message : 'Failed to refresh workspace')
       })
   }, [latestEvent, runId])
 
-  useEffect(() => {
-    if (!latestEvent) return
-    if (latestEvent.type === 'subtask_start' && typeof latestEvent.subtask_title === 'string') {
-      setStatusMessage(`Running: ${latestEvent.subtask_title}`)
-    } else if (latestEvent.type === 'run_done') {
-      setStatusMessage(`Run finished: ${String(latestEvent.status ?? 'unknown')}`)
-    }
-  }, [latestEvent])
-
   async function startRun() {
     setIsStarting(true)
     setErrorMessage(null)
-    setStatusMessage('Starting run...')
     setManifest(null)
     setSelectedArtifact(null)
     setPreview(null)
@@ -91,10 +80,8 @@ function App() {
       }
       const data = (await response.json()) as { run_id: string }
       setRunId(data.run_id)
-      setStatusMessage(`Run started: ${data.run_id}`)
     } catch (error: unknown) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to start run')
-      setStatusMessage('Run failed to start')
     } finally {
       setIsStarting(false)
     }
@@ -111,7 +98,6 @@ function App() {
       }
       const data = (await response.json()) as ArtifactPreview
       setPreview(data)
-      setStatusMessage(`Loaded artifact: ${artifactName}`)
     } catch (error: unknown) {
       setErrorMessage(error instanceof Error ? error.message : `Failed to load artifact ${artifactName}`)
     }
@@ -119,29 +105,34 @@ function App() {
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_28%),linear-gradient(180deg,_#0f172a,_#020617)] px-4 py-8 text-slate-100">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
         <GoalInput goal={goal} isRunning={isStarting || isRunning} onGoalChange={setGoal} onSubmit={() => void startRun()} />
-        <section className="rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-sm text-slate-200">
-          <div className="font-medium text-white">Status</div>
-          <div className="mt-1">{statusMessage}</div>
-          {errorMessage ? <div className="mt-2 text-rose-300">Error: {errorMessage}</div> : null}
-        </section>
+
+        {errorMessage && (
+          <div className="rounded-2xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-sm text-rose-300">
+            {errorMessage}
+          </div>
+        )}
+
         <ProgressBar
           completed={completedSubtasks}
           total={totalSubtasks}
           currentStep={currentStep}
           connectionStatus={connectionStatus}
         />
-        <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+
+        <WorkflowGraph events={events as AgentEvent[]} />
+
+        <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
           <LogPanel events={events as AgentEvent[]} />
-          <div className="space-y-6">
+          <div className="space-y-5">
             <ArtifactPanel
               manifest={manifest}
               selectedArtifact={selectedArtifact}
               preview={preview}
               onSelect={(artifactName) => void loadArtifact(artifactName)}
             />
-            <ReportPanel finalEvent={finalEvent as AgentEvent | null} />
+            <ReportPanel events={events as AgentEvent[]} />
           </div>
         </div>
       </div>
