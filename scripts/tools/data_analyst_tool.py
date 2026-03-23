@@ -16,6 +16,7 @@ def run_data_analyst(
     max_rounds: int = 4,
     timeout_sec: int = 120,
     workspace: Workspace | None = None,
+    event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """
     Iterative sub-agent: analyze data in a loop until ready, then emit a feature plan.
@@ -34,6 +35,7 @@ def run_data_analyst(
         initial_instruction=initial_instruction,
         max_rounds=max_rounds,
         timeout_sec=timeout_sec,
+        event_callback=event_callback,
     )
 
     round_summaries = []

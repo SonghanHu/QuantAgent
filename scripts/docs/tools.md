@@ -6,9 +6,11 @@ The small-model router (`agent.tool_routing.resolve_subtask_tool`) reads this ca
 
 **Workspace:** Every run has a shared `Workspace` directory (`data/workspaces/<run_id>/`). Tools that accept a `workspace` parameter automatically receive it. Data flows between tools through workspace artifacts:
 
-- `load_data` → saves `raw_data.parquet` into workspace
-- `run_data_analysis` / `run_data_analyst` / `train_model` → auto-resolve `data_path` from `workspace.raw_data` when not explicitly set
-- `run_data_analyst` → saves `feature_plan.json` into workspace
+- `load_data` → saves `raw_data.parquet`
+- `run_data_analysis` / `run_data_analyst` / `train_model` → auto-resolve `data_path` from `raw_data` when not explicitly set
+- `run_data_analyst` → saves `feature_plan.json`
+- `build_features` → reads `raw_data` + `feature_plan`, saves `engineered_data.parquet`
+- `train_model` → can also read from `engineered_data` (when `data_path` not set)
 
 You do **not** need to pass `data_path` explicitly when the upstream `load_data` has already run — the workspace handles artifact flow.
 
@@ -72,11 +74,13 @@ Skip steps only if the subtask clearly does not need them (e.g. pure reporting m
 
 ## `build_features`
 
-- **What it does:** Pretends to build factors from loaded data.
-- **When to use:** Subtask mentions features, factors, signals, momentum, volatility, engineering.
-- **Arguments:** `method: str = "momentum"` — feature family label.
-- **Returns:** `{ "features": [...], "method" }`.
-- **ReAct example:** *Thought: Plan asks for momentum factors.* → *Action: build_features* with `{ "method": "momentum" }`.
+- **What it does:** Reads `feature_plan` and `raw_data` from workspace, uses `skills/feature_engineering.md` to generate and execute a Python script that computes the planned features. Saves the enriched DataFrame as `engineered_data` in workspace.
+- **When to use:** After `run_data_analyst` has produced a feature plan. Subtask mentions features, factors, signals, engineering, 特征工程.
+- **Arguments:**
+  - `workspace`: auto-injected. Must contain `raw_data` and `feature_plan` artifacts.
+  - `timeout_sec`: per-script subprocess timeout (default `120`).
+- **Returns:** `planned_features`, `target_column`, `engineered_shape`, `engineered_columns`, script execution details. Also saves `engineered_data` to workspace.
+- **ReAct example:** *Thought: Feature plan is ready, now build features.* → *Action: build_features* with `{}`.
 
 ---
 
@@ -99,10 +103,10 @@ Skip steps only if the subtask clearly does not need them (e.g. pure reporting m
 
 ## `run_backtest`
 
-- **What it does:** Pretends to simulate PnL and risk stats.
+- **What it does:** Simulates PnL and risk stats (**stub** — will become a sub-agent that generates a backtest script from workspace artifacts).
 - **When to use:** Subtask mentions backtest, Sharpe, drawdown, turnover, 回测, 净值.
-- **Arguments:** none (stub).
-- **Returns:** `{ "sharpe", "max_drawdown", "turnover" }`.
+- **Arguments:** `workspace`: auto-injected (not yet used by stub).
+- **Returns:** `{ "sharpe", "max_drawdown", "turnover", "stub": true }`.
 - **ReAct example:** *Thought: Need performance metrics.* → *Action: run_backtest* with `{}`.
 
 ---

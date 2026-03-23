@@ -114,8 +114,26 @@ def load_data(
     df, meta = _fetch_yfinance(spec)
 
     if df is not None and workspace is not None:
+        df = _flatten_columns(df)
+        meta["columns"] = list(df.columns)
         path = workspace.save_df("raw_data", df, description=f"OHLCV from yfinance: {spec.tickers}")
         meta["workspace_artifact"] = "raw_data"
         meta["workspace_path"] = str(path)
 
     return meta
+
+
+def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Flatten yfinance MultiIndex columns into simple strings."""
+    if not isinstance(df.columns, pd.MultiIndex):
+        return df
+    levels = df.columns.nlevels
+    if levels == 2:
+        unique_l1 = df.columns.get_level_values(1).unique()
+        if len(unique_l1) == 1:
+            df.columns = df.columns.get_level_values(0)
+        else:
+            df.columns = [f"{a}_{b}" for a, b in df.columns]
+    else:
+        df.columns = ["_".join(str(x) for x in col).strip("_") for col in df.columns]
+    return df

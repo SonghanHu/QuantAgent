@@ -199,8 +199,11 @@ def train_model(
 
     Returns JSON-friendly metrics and ``best_params`` when applicable.
     """
-    if data_path is None and workspace is not None and workspace.has("raw_data"):
-        data_path = str(workspace.df_path("raw_data"))
+    if data_path is None and workspace is not None:
+        if workspace.has("engineered_data"):
+            data_path = str(workspace.df_path("engineered_data"))
+        elif workspace.has("raw_data"):
+            data_path = str(workspace.df_path("raw_data"))
 
     key = _normalize_model_name(model_name)
     factories = _estimator_factories()
@@ -213,6 +216,8 @@ def train_model(
         raise KeyError(f"target_column {target_column!r} not in data columns: {list(df.columns)}")
 
     feats = _resolve_features(df, target_column, fc)
+    mask = df[target_column].notna()
+    df = df.loc[mask]
     X = df[feats]
     y = df[target_column]
 
