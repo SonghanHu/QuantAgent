@@ -44,12 +44,17 @@ function formatEvent(event: AgentEvent): { icon: string; label: string; detail: 
         tone: 'border-white/10 bg-slate-900/60',
       }
     case 'subtask_done': {
-      const isError = event.status !== 'ok'
+      const isSkipped = event.status === 'skipped'
+      const isError = event.status !== 'ok' && !isSkipped
       return {
-        icon: isError ? '✗' : '✓',
-        label: `#${event.subtask_id} ${isError ? 'failed' : 'done'}: ${event.tool_name}`,
+        icon: isSkipped ? '⏭' : isError ? '✗' : '✓',
+        label: `#${event.subtask_id} ${isSkipped ? 'skipped' : isError ? 'failed' : 'done'}: ${event.tool_name}`,
         detail: String(event.result_summary ?? ''),
-        tone: isError ? 'border-rose-400/20 bg-rose-400/5' : 'border-emerald-400/20 bg-emerald-400/5',
+        tone: isSkipped
+          ? 'border-slate-400/20 bg-slate-400/5'
+          : isError
+            ? 'border-rose-400/20 bg-rose-400/5'
+            : 'border-emerald-400/20 bg-emerald-400/5',
       }
     }
     case 'workspace_update':
@@ -96,6 +101,13 @@ function formatEvent(event: AgentEvent): { icon: string; label: string; detail: 
         tone: 'border-amber-400/15 bg-amber-400/5',
       }
     }
+    case 'report_generating':
+      return {
+        icon: '📝',
+        label: 'Generating final report',
+        detail: 'LLM is writing the report...',
+        tone: 'border-cyan-400/15 bg-cyan-400/5',
+      }
     case 'run_done': {
       const status = event.status as string
       return {

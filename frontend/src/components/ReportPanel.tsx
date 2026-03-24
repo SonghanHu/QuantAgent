@@ -159,9 +159,11 @@ function renderMarkdown(text: string) {
 
 export function ReportPanel({ events, runId }: ReportPanelProps) {
   const [hydratedReport, setHydratedReport] = useState<LLMReport | null>(null)
+  const [reportMarkdown, setReportMarkdown] = useState<string | null>(null)
 
   useEffect(() => {
     setHydratedReport(null)
+    setReportMarkdown(null)
   }, [runId])
 
   useEffect(() => {
@@ -187,6 +189,18 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
           limitations: Array.isArray(c.limitations) ? (c.limitations as string[]) : [],
           conclusion: String(c.conclusion ?? ''),
         })
+      })
+      .catch(() => {})
+  }, [events, runId])
+
+  useEffect(() => {
+    if (!runId) return
+    const runDone = events.find((e) => e.type === 'run_done')
+    if (!runDone) return
+    void fetch(`/api/workspace/${runId}/report.md`)
+      .then((res) => (res.ok ? res.text() : null))
+      .then((text) => {
+        if (text) setReportMarkdown(text)
       })
       .catch(() => {})
   }, [events, runId])
@@ -243,9 +257,27 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
     <section className="rounded-3xl border border-white/10 bg-white/5 p-5">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-white">Final report</h2>
-        <span className={`rounded-full border px-3 py-1 text-xs font-medium ${statusBg} ${statusColor}`}>
-          {metrics.status}
-        </span>
+        <div className="flex items-center gap-2">
+          {reportMarkdown && (
+            <button
+              className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+              onClick={() => {
+                const blob = new Blob([reportMarkdown], { type: 'text/markdown' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `report-${runId}.md`
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+            >
+              ↓ .md
+            </button>
+          )}
+          <span className={`rounded-full border px-3 py-1 text-xs font-medium ${statusBg} ${statusColor}`}>
+            {metrics.status}
+          </span>
+        </div>
       </div>
 
       {/* LLM-generated report */}

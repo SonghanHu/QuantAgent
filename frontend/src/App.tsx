@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { ArtifactPanel } from './components/ArtifactPanel'
+import { ClarifyDialog } from './components/ClarifyDialog'
 import { GoalInput } from './components/GoalInput'
 import { LogPanel } from './components/LogPanel'
 import { ProgressBar } from './components/ProgressBar'
@@ -10,7 +11,7 @@ import { useAgentSocket } from './hooks/useAgentSocket'
 import type { AgentEvent, ArtifactPreview, WorkspaceManifest } from './types'
 
 const defaultGoal =
-  'Download 1 year of SPY daily data, analyze it, engineer features, train a ridge model, backtest, and evaluate the result.'
+  'Download 1 year of SPY daily data, search for relevant alpha factors, engineer features, train a ridge model, backtest, and evaluate the result.'
 
 function App() {
   const [goal, setGoal] = useState(defaultGoal)
@@ -20,6 +21,7 @@ function App() {
   const [preview, setPreview] = useState<ArtifactPreview | null>(null)
   const [isStarting, setIsStarting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [showClarify, setShowClarify] = useState(false)
   const { events, connectionStatus } = useAgentSocket(runId)
   const latestEvent = events.at(-1) ?? null
 
@@ -63,7 +65,22 @@ function App() {
       })
   }, [latestEvent, runId])
 
-  async function startRun() {
+  function handleRunClick() {
+    setShowClarify(true)
+  }
+
+  function handleClarifyConfirm(refinedGoal: string) {
+    setShowClarify(false)
+    setGoal(refinedGoal)
+    void doStartRun(refinedGoal)
+  }
+
+  function handleClarifySkip() {
+    setShowClarify(false)
+    void doStartRun(goal)
+  }
+
+  async function doStartRun(runGoal: string) {
     setIsStarting(true)
     setErrorMessage(null)
     setManifest(null)
@@ -73,7 +90,7 @@ function App() {
       const response = await fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal }),
+        body: JSON.stringify({ goal: runGoal }),
       })
       if (!response.ok) {
         throw new Error(`Failed to start run: ${response.status}`)
@@ -106,7 +123,11 @@ function App() {
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_28%),linear-gradient(180deg,_#0f172a,_#020617)] px-4 py-8 text-slate-100">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
-        <GoalInput goal={goal} isRunning={isStarting || isRunning} onGoalChange={setGoal} onSubmit={() => void startRun()} />
+        <GoalInput goal={goal} isRunning={isStarting || isRunning} onGoalChange={setGoal} onSubmit={handleRunClick} />
+
+        {showClarify && !isStarting && !isRunning && (
+          <ClarifyDialog goal={goal} onConfirm={handleClarifyConfirm} onSkip={handleClarifySkip} />
+        )}
 
         {errorMessage && (
           <div className="rounded-2xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-sm text-rose-300">

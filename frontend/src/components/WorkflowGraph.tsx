@@ -11,7 +11,7 @@ type PipelineNode = {
   title: string
   description: string
   dependencies: number[]
-  status: 'pending' | 'running' | 'done' | 'error'
+  status: 'pending' | 'running' | 'done' | 'error' | 'skipped'
   toolName?: string
   toolSource?: string
   resultSummary?: string
@@ -27,10 +27,12 @@ type SubRound = {
 }
 
 const TOOL_STYLE: Record<string, { dot: string; badge: string; label: string }> = {
+  web_search: { dot: 'bg-teal-400', badge: 'bg-teal-400/15 text-teal-300 ring-teal-400/30', label: 'Web Search' },
   load_data: { dot: 'bg-sky-400', badge: 'bg-sky-400/15 text-sky-300 ring-sky-400/30', label: 'Data Loader' },
   run_data_analyst: { dot: 'bg-amber-400', badge: 'bg-amber-400/15 text-amber-300 ring-amber-400/30', label: 'Data Analyst' },
   run_data_analysis: { dot: 'bg-amber-400', badge: 'bg-amber-400/15 text-amber-300 ring-amber-400/30', label: 'EDA Skill' },
   build_features: { dot: 'bg-violet-400', badge: 'bg-violet-400/15 text-violet-300 ring-violet-400/30', label: 'Feature Eng.' },
+  build_alphas: { dot: 'bg-fuchsia-400', badge: 'bg-fuchsia-400/15 text-fuchsia-300 ring-fuchsia-400/30', label: 'Alpha Eng.' },
   train_model: { dot: 'bg-emerald-400', badge: 'bg-emerald-400/15 text-emerald-300 ring-emerald-400/30', label: 'Model Trainer' },
   run_backtest: { dot: 'bg-cyan-400', badge: 'bg-cyan-400/15 text-cyan-300 ring-cyan-400/30', label: 'Backtester' },
   evaluate_strategy: { dot: 'bg-rose-400', badge: 'bg-rose-400/15 text-rose-300 ring-rose-400/30', label: 'Evaluator' },
@@ -48,6 +50,7 @@ const STATUS_ICON: Record<string, string> = {
   running: '◉',
   done: '✓',
   error: '✗',
+  skipped: '⏭',
 }
 
 function derivePipeline(events: AgentEvent[]): { nodes: PipelineNode[]; topoOrder: number[] } {
@@ -90,7 +93,7 @@ function derivePipeline(events: AgentEvent[]): { nodes: PipelineNode[]; topoOrde
     } else if (ev.type === 'subtask_done') {
       const node = nodeMap.get(ev.subtask_id as number)
       if (node) {
-        node.status = ev.status === 'ok' ? 'done' : 'error'
+        node.status = ev.status === 'ok' ? 'done' : ev.status === 'skipped' ? 'skipped' : 'error'
         node.resultSummary = ev.result_summary as string
       }
     } else if (ev.type === 'workspace_update' && currentSubtaskId !== null) {
@@ -121,11 +124,14 @@ function derivePipeline(events: AgentEvent[]): { nodes: PipelineNode[]; topoOrde
 function ArtifactBadge({ name }: { name: string }) {
   const icons: Record<string, string> = {
     raw_data: '📊',
+    search_context: '🔍',
     feature_plan: '📋',
+    alpha_plan: '🧬',
     engineered_data: '⚙️',
     model_output: '🧠',
     backtest_results: '📈',
     evaluation: '✅',
+    final_report: '📝',
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-indigo-400/10 px-2 py-0.5 text-[10px] text-indigo-300 ring-1 ring-indigo-400/20">
@@ -249,10 +255,12 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
                           ? `${style.dot} animate-pulse text-slate-950 ring-white/40`
                           : node.status === 'error'
                             ? 'bg-rose-500 text-white ring-rose-400/40'
-                            : 'bg-slate-700 text-slate-400 ring-white/10'
+                            : node.status === 'skipped'
+                              ? 'bg-slate-600 text-slate-400 ring-slate-500/30'
+                              : 'bg-slate-700 text-slate-400 ring-white/10'
                     }`}
                   >
-                    {node.status === 'done' || node.status === 'error'
+                    {node.status === 'done' || node.status === 'error' || node.status === 'skipped'
                       ? STATUS_ICON[node.status]
                       : node.id}
                   </div>
@@ -288,7 +296,9 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
                 ? 'text-cyan-400 animate-pulse'
                 : node.status === 'error'
                   ? 'text-rose-400'
-                  : 'text-slate-600'
+                  : node.status === 'skipped'
+                    ? 'text-slate-500'
+                    : 'text-slate-600'
 
           return (
             <div key={node.id} className="flex gap-4">

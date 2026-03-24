@@ -10,8 +10,8 @@ export function GoalInput({ goal, isRunning, onGoalChange, onSubmit }: GoalInput
     <section className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl shadow-black/20 backdrop-blur">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-white">Real-time Agent Dashboard</h1>
-          <p className="text-sm text-slate-300">Run the research agent and watch each step stream into the UI.</p>
+          <h1 className="text-2xl font-semibold text-white">QuantAgent Dashboard</h1>
+          <p className="text-sm text-slate-300">Multi-agent quant research: search, analyze, engineer features & alphas, train, backtest, and evaluate.</p>
         </div>
         <button
           className="rounded-full bg-cyan-400 px-5 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
