@@ -44,9 +44,24 @@ class RunRequest(BaseModel):
     model: str | None = None
 
 
+class ClarifyRequest(BaseModel):
+    goal: str = Field(min_length=1)
+    conversation: list[dict[str, str]] | None = None
+    model: str | None = None
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/api/clarify")
+def clarify(req: ClarifyRequest) -> dict[str, Any]:
+    """Pre-execution clarification: ask LLM to understand the goal or ask questions."""
+    from agent.clarifier import clarify_goal
+
+    result = clarify_goal(req.goal, req.conversation, model=req.model)
+    return result.model_dump()
 
 
 @app.get("/")

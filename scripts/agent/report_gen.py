@@ -166,6 +166,49 @@ def build_fallback_report(
     )
 
 
+def _report_to_markdown(report: dict[str, Any]) -> str:
+    """Convert a structured report dict into a readable Markdown document."""
+    lines: list[str] = []
+    title = report.get("title", "Research Report")
+    lines.append(f"# {title}\n")
+
+    summary = report.get("executive_summary", "")
+    if summary:
+        lines.append(f"## Executive Summary\n\n{summary}\n")
+
+    for section in report.get("sections") or []:
+        heading = section.get("heading", "Section")
+        body = section.get("body", "")
+        lines.append(f"## {heading}\n\n{body}\n")
+
+    findings = report.get("key_findings") or []
+    if findings:
+        lines.append("## Key Findings\n")
+        for f in findings:
+            lines.append(f"- {f}")
+        lines.append("")
+
+    recs = report.get("recommendations") or []
+    if recs:
+        lines.append("## Recommendations\n")
+        for r in recs:
+            lines.append(f"- {r}")
+        lines.append("")
+
+    limits = report.get("limitations") or []
+    if limits:
+        lines.append("## Limitations\n")
+        for l in limits:
+            lines.append(f"- {l}")
+        lines.append("")
+
+    conclusion = report.get("conclusion", "")
+    if conclusion:
+        lines.append(f"## Conclusion\n\n{conclusion}\n")
+
+    return "\n".join(lines)
+
+
 def _persist_and_return(workspace: Workspace, report_dict: dict[str, Any]) -> dict[str, Any]:
     safe = sanitize_for_json(report_dict)
     try:
@@ -176,6 +219,15 @@ def _persist_and_return(workspace: Workspace, report_dict: dict[str, Any]) -> di
         )
     except OSError:
         pass
+
+    try:
+        md_content = _report_to_markdown(safe)
+        md_path = workspace.root / "report.md"
+        md_path.write_text(md_content, encoding="utf-8")
+        safe["report_md_path"] = str(md_path)
+    except OSError:
+        pass
+
     return safe
 
 

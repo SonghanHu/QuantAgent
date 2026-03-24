@@ -74,6 +74,7 @@ def run_workflow(
     app_run_id: str | None = None,
     workspace_name: str | None = None,
     verbose: bool = True,
+    interactive: bool = False,
 ) -> dict[str, Any]:
     load_dotenv()
     model = model or os.environ.get("OPENAI_SMALL_MODEL")
@@ -85,6 +86,12 @@ def run_workflow(
     def log(*parts: Any) -> None:
         if verbose:
             print(*parts)
+
+    if interactive:
+        from agent.clarifier import run_interactive_clarification
+
+        goal = run_interactive_clarification(goal, model=model)
+        log(f"[clarified goal] {goal}\n")
 
     conn = None
     run_id: int | None = None
@@ -254,6 +261,11 @@ def main() -> int:
         help="Do not write SQLite logs under data/agent.db",
     )
     p.add_argument(
+        "--interactive", "-i",
+        action="store_true",
+        help="Run interactive clarification dialog before execution",
+    )
+    p.add_argument(
         "goal",
         nargs="*",
         default=[
@@ -267,7 +279,7 @@ def main() -> int:
     if not goal:
         p.print_help()
         return 1
-    result = run_workflow(goal, use_db=not args.no_db)
+    result = run_workflow(goal, use_db=not args.no_db, interactive=args.interactive)
     return int(result["exit_code"])
 
 
