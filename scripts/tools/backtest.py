@@ -49,6 +49,29 @@ def run_backtest(
 
     model_output = workspace.load_json("model_output")
 
+    import pandas as pd
+
+    data_df = pd.read_parquet(data_path)
+    target_col = str(model_output.get("target_column", "target"))
+    feature_cols = model_output.get("feature_columns", [])
+    missing_target = target_col not in data_df.columns
+    missing_feats = [c for c in feature_cols if c not in data_df.columns]
+    if missing_target or missing_feats:
+        parts = []
+        if missing_target:
+            parts.append(f"target '{target_col}' missing")
+        if missing_feats:
+            parts.append(f"features missing: {missing_feats[:10]}")
+        return {
+            "error": "data_model_mismatch",
+            "message": (
+                f"Backtest data ({data_path}) does not match model_output: "
+                + "; ".join(parts)
+                + f". Data columns: {list(data_df.columns)[:15]}. "
+                "Re-run build_features to produce an engineered_data with target + features."
+            ),
+        }
+
     raw_config = {
         "strategy_type": strategy_type,
         "rebalance_freq": rebalance_freq,

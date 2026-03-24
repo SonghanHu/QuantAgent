@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -10,6 +11,8 @@ if TYPE_CHECKING:
 
 import numpy as np
 import pandas as pd
+
+_VALID_COL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_ ]*$")
 from scipy.stats import loguniform, randint, uniform
 from sklearn.datasets import make_regression
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
@@ -132,6 +135,38 @@ def _load_frame(data_path: str | None, *, n_samples: int, n_features: int, targe
     raise ValueError(f"Unsupported data_path suffix: {suf} (use .csv or .parquet)")
 
 
+def _maybe_add_forward_return_target(df: pd.DataFrame, target_column: str) -> tuple[pd.DataFrame, str | None]:
+    """
+    If *target_column* is missing but OHLCV price columns exist (typical yfinance panel),
+    add *target_column* = one-step forward simple return of the best available price series.
+
+    Returns (df, source_column_used_or_None).
+    """
+    if target_column in df.columns:
+        return df, None
+    candidates = [
+        "Adj Close",
+        "Adj_Close",
+        "AdjClose",
+        "adj_close",
+        "Close",
+        "close",
+    ]
+    col = next((c for c in candidates if c in df.columns), None)
+    if col is None:
+        lower_map = {str(x).lower().replace(" ", "_"): x for x in df.columns}
+        for key in ("adj_close", "close"):
+            if key in lower_map:
+                col = lower_map[key]
+                break
+    if col is None:
+        return df, None
+    out = df.copy()
+    px = pd.to_numeric(out[col], errors="coerce")
+    out[target_column] = px.pct_change().shift(-1)
+    return out, col
+
+
 def _resolve_features(df: pd.DataFrame, target_column: str, explicit: list[str] | None) -> list[str]:
     if explicit is not None and len(explicit) > 0:
         missing = [c for c in explicit if c not in df.columns]
@@ -189,6 +224,8 @@ def train_model(
 
     - **Data:** ``data_path`` to ``.csv`` / ``.parquet``, or omit to use synthetic regression data
       (column names ``f0..f{n-1}`` + ``target_column``).
+    - **Target:** If the frame has no ``target_column`` but has ``Adj Close`` / ``Close`` (e.g. yfinance),
+      a **forward 1-period return** is created automatically under ``target_column`` (default ``target``).
     - **Features:** ``feature_columns`` as list or comma-separated string; if omitted, all numeric
       columns except ``target_column`` are used.
     - **Model:** ``model_name`` one of:
@@ -202,6 +239,11 @@ def train_model(
     if data_path is None and workspace is not None:
         if workspace.has("engineered_data"):
             data_path = str(workspace.df_path("engineered_data"))
+            if workspace.has("feature_plan") and target_column == "target":
+                fp = workspace.load_json("feature_plan")
+                fp_target = str(fp.get("target_column", "")).strip()
+                if fp_target and _VALID_COL_RE.match(fp_target) and len(fp_target) <= 60:
+                    target_column = fp_target
         elif workspace.has("raw_data"):
             data_path = str(workspace.df_path("raw_data"))
 
@@ -212,8 +254,12 @@ def train_model(
 
     fc = _parse_feature_columns(feature_columns)
     df = _load_frame(data_path, n_samples=n_samples, n_features=n_features, target_column=target_column, rs=random_state)
+    df, derived_from = _maybe_add_forward_return_target(df, target_column)
     if target_column not in df.columns:
-        raise KeyError(f"target_column {target_column!r} not in data columns: {list(df.columns)}")
+        raise KeyError(
+            f"target_column {target_column!r} not in data columns: {list(df.columns)}. "
+            "Add a target (e.g. run feature engineering / run_data_analyst) or use OHLCV with Adj Close/Close."
+        )
 
     feats = _resolve_features(df, target_column, fc)
     mask = df[target_column].notna()
@@ -221,9 +267,18 @@ def train_model(
     X = df[feats]
     y = df[target_column]
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state
+    idx = df.index
+    time_ordered = isinstance(idx, pd.DatetimeIndex) and (
+        idx.is_monotonic_increasing or idx.is_monotonic_decreasing
     )
+    if time_ordered and len(df) >= 5:
+        split_idx = max(1, int(len(df) * (1 - test_size)))
+        X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+        y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
 
     base = factories[key](random_state)
     pipe = _build_pipeline(base)
@@ -263,6 +318,8 @@ def train_model(
 
     result = {
         "model": key,
+        "target_derived_from_price": derived_from,
+        "time_ordered_split": bool(time_ordered and len(df) >= 5),
         "tune_hyperparameters": bool(tune_hyperparameters),
         "tune_ignored": tune_ignored,
         "tune_note": "OLS has no hyperparameters; used fixed LinearRegression."

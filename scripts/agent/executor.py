@@ -19,6 +19,18 @@ from .tool_routing import resolve_subtask_tool
 from .workspace import Workspace
 
 
+def _tool_output_indicates_failure(output: Any) -> bool:
+    """
+    Many tools signal failure via a dict instead of raising (workspace missing, subprocess rc, etc.).
+    """
+    if not isinstance(output, dict):
+        return False
+    if output.get("error") is not None and output.get("error") != "":
+        return True
+    rc = output.get("returncode")
+    return rc is not None and rc != 0
+
+
 def run_subtask(
     state: AgentState,
     subtask: Subtask,
@@ -72,6 +84,7 @@ def run_subtask(
 
     try:
         output = run_tool(name, **kwargs)
+        failed = _tool_output_indicates_failure(output)
         summary_bits = [
             f"{k}={v}"
             for k, v in output.items()
@@ -94,18 +107,34 @@ def run_subtask(
                 "run_id",
                 "stopped_reason",
                 "workspace_artifact",
+                "error",
             )
         ]
         summary = ", ".join(summary_bits) if summary_bits else "ok"
         extra = f" [{resolved.source}]" if resolved.source else ""
-        record = ExecutionRecord(
-            subtask_id=subtask.id,
-            tool_name=name,
-            status="ok",
-            result_summary=summary + extra,
-            output=output,
-        )
-        status = state.status
+        if failed:
+            err_msg = output.get("message") or output.get("error")
+            if not err_msg and output.get("stderr"):
+                err_msg = str(output["stderr"])[:300]
+            if not err_msg:
+                err_msg = f"tool reported failure: {summary}"
+            record = ExecutionRecord(
+                subtask_id=subtask.id,
+                tool_name=name,
+                status="error",
+                result_summary=str(err_msg) + extra,
+                output=output,
+            )
+            status = "failed"
+        else:
+            record = ExecutionRecord(
+                subtask_id=subtask.id,
+                tool_name=name,
+                status="ok",
+                result_summary=summary + extra,
+                output=output,
+            )
+            status = state.status
     except Exception as exc:  # noqa: BLE001 — surface any tool failure to the log
         record = ExecutionRecord(
             subtask_id=subtask.id,

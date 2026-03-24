@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent.workspace import Workspace
+
+_VALID_COL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_ ]*$")
+_DEFAULT_TARGET = "target"
+
+
+def _sanitize_target_column(raw: Any) -> str:
+    """
+    Return a usable target column name from the feature plan.
+
+    Rejects obviously invalid values (long sentences, empty, non-ASCII names
+    that the data analyst sometimes produces when it cannot decide).
+    """
+    s = str(raw).strip() if raw else ""
+    if not s or len(s) > 60 or not _VALID_COL_RE.match(s):
+        return _DEFAULT_TARGET
+    return s
 
 
 def build_features(
@@ -19,7 +36,9 @@ def build_features(
     script that implements the plan, runs it, and saves the enriched DataFrame
     back as ``engineered_data`` in the workspace.
 
-    Falls back to the FeaturePlan's feature names if the script fails.
+    Validates that:
+    - The feature plan has a sane ``target_column`` name.
+    - The output parquet actually contains that target.
     """
     if workspace is None:
         return {"error": "no_workspace", "message": "build_features requires a workspace with raw_data and feature_plan."}
@@ -33,6 +52,21 @@ def build_features(
     from agent.feature_skill import execute_feature_skill
 
     plan = workspace.load_json("feature_plan")
+
+    target_column = _sanitize_target_column(plan.get("target_column"))
+    plan["target_column"] = target_column
+
+    features = plan.get("features") or []
+    if not features:
+        return {
+            "error": "empty_feature_plan",
+            "message": (
+                "feature_plan.features is empty — the data analyst did not propose any features. "
+                "Re-run run_data_analyst with a clearer goal or richer data."
+            ),
+            "target_column": target_column,
+        }
+
     data_path = str(workspace.df_path("raw_data"))
 
     result = execute_feature_skill(
@@ -45,12 +79,23 @@ def build_features(
         import pandas as pd
 
         enriched = pd.read_parquet(result["output_path"])
+
+        if target_column not in enriched.columns:
+            result["error"] = "missing_target_column"
+            result["message"] = (
+                f"Feature script ran but output does not contain required target column "
+                f"'{target_column}'. Columns produced: {list(enriched.columns)[:20]}"
+            )
+            result["returncode"] = 1
+            result["target_column"] = target_column
+            return result
+
         workspace.save_df("engineered_data", enriched, description="Feature-engineered dataset")
         result["workspace_artifact"] = "engineered_data"
         result["engineered_shape"] = [enriched.shape[0], enriched.shape[1]]
         result["engineered_columns"] = list(enriched.columns)[:30]
 
-    features = [f["name"] for f in plan.get("features", [])]
-    result["planned_features"] = features
-    result["target_column"] = plan.get("target_column", "target")
+    planned_feature_names = [f["name"] for f in features]
+    result["planned_features"] = planned_feature_names
+    result["target_column"] = target_column
     return result
