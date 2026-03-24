@@ -7,6 +7,7 @@ Reuses the same safety/execution pattern as ``analysis_skill`` but injects
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
@@ -41,6 +42,11 @@ def _openai_client() -> OpenAI:
     if base:
         kwargs["base_url"] = base.rstrip("/")
     return OpenAI(**kwargs)
+
+
+def _validate_python_syntax(source: str) -> None:
+    """Fail early on indentation / syntax errors before spawning Python."""
+    ast.parse(source)
 
 
 def execute_feature_skill(
@@ -90,7 +96,8 @@ TARGET_COLUMN = {repr(target_column)}
         "You output structured JSON with a single field `script` — executable Python code only. "
         "Follow the skill specification exactly. Use only allowed imports. "
         "The preamble defining DATA_PATH, OUTPUT_PATH, OUTPUT_JSON, RUN_DIR, FEATURE_PLAN_JSON, TARGET_COLUMN "
-        "will be prepended for you."
+        "will be prepended for you. "
+        "Return one complete script with consistent 4-space indentation and no stray indented top-level lines."
     )
     user = (
         f"## Skill\n\n{skill}\n\n"
@@ -100,13 +107,45 @@ TARGET_COLUMN = {repr(target_column)}
     )
 
     cli = client or _openai_client()
-    parsed = parse_script_with_retry(
-        cli, m, [{"role": "system", "content": system}, {"role": "user", "content": user}],
-    )
-    body = _clean_script(parsed.script)
-    _validate_script(body)
-
-    full_source = preamble + "\n\n" + body + "\n"
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    last_syntax_error: str | None = None
+    full_source = ""
+    for attempt in range(3):
+        parsed = parse_script_with_retry(cli, m, messages)
+        body = _clean_script(parsed.script)
+        _validate_script(body)
+        full_source = preamble + "\n\n" + body + "\n"
+        try:
+            _validate_python_syntax(full_source)
+            last_syntax_error = None
+            break
+        except SyntaxError as exc:
+            last_syntax_error = f"{exc.__class__.__name__}: {exc}"
+            if attempt == 2:
+                return {
+                    "skill": "feature_engineering",
+                    "run_id": run_id,
+                    "script_path": str(script_path.relative_to(REPO_ROOT)),
+                    "output_path": None,
+                    "returncode": 1,
+                    "stdout": "",
+                    "stderr": last_syntax_error,
+                    "summary": {"error": "syntax_validation_failed", "detail": last_syntax_error},
+                    "data_path": data_path,
+                }
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous script does not parse as Python. "
+                        f"Fix this exact syntax problem and return a full corrected script only: {last_syntax_error}. "
+                        "Pay special attention to indentation and top-level block structure."
+                    ),
+                }
+            )
     script_path.write_text(full_source, encoding="utf-8")
 
     proc = subprocess.run(

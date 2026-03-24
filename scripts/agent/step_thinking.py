@@ -61,6 +61,7 @@ def think_after_subtask(
 
     allowed_set = set(allowed_tools)
     tools_line = ", ".join(sorted(allowed_tools))
+    has_debug_notes = "debug_notes" in workspace_artifacts
 
     next_block = "None (pipeline end or no further subtasks in plan)."
     if next_subtask is not None:
@@ -79,6 +80,7 @@ def think_after_subtask(
     user = (
         f"## Overall goal\n{goal[:3000]}\n\n"
         f"## Workspace artifacts (names + kinds)\n{json.dumps(workspace_artifacts, ensure_ascii=False)[:2000]}\n\n"
+        f"## Debug already available\n{'yes' if has_debug_notes else 'no'}\n\n"
         f"## Completed subtask\nid={completed.id}\n{completed.title}\n{completed.description}\n\n"
         f"## Tool used: {record.tool_name}\nstatus: {record.status}\n"
         f"summary: {out_summary}\n\n"
@@ -95,7 +97,10 @@ def think_after_subtask(
         "- If the next step needs symbols, universes, or data sources not yet in the workspace, "
         "usually prefer `web_search` before `run_data_loader`.\n"
         "- If the next step is `run_data_loader` but tickers/period are ambiguous, say so in `note_for_next_step`.\n"
-        "- If the run failed or skipped, say what tool or data would unblock the pipeline.\n\n"
+        "- If the run failed or skipped, say what tool or data would unblock the pipeline.\n"
+        "- If `debug_notes` already exists in the workspace, do NOT suggest `run_debug_agent` again unless the "
+        "next planned subtask is explicitly debugging. Prefer the fix/retry step instead.\n"
+        "- Prefer the immediate unblock for the next planned subtask over distant downstream tools.\n\n"
         f"Allowed tool names: {tools_line}."
     )
 
@@ -119,6 +124,8 @@ def think_after_subtask(
             }
         t = cast(StepThink, parsed)
         filtered = [x for x in t.tools_to_consider if x in allowed_set]
+        if has_debug_notes and next_subtask is not None and "debug" not in next_subtask.title.lower():
+            filtered = [x for x in filtered if x != "run_debug_agent"]
         return {
             "reasoning": t.reasoning.strip(),
             "tools_to_consider": filtered,
