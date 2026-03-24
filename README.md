@@ -320,7 +320,10 @@ Each run produces:
 | `subtask_start` | Subtask starts | `subtask_title`, `position`, `total` |
 | `subtask_done` | Subtask ends | `status`, `summary`, `output` |
 | `workspace_update` | Artifact changed | `artifact_name` |
-| `data_analyst_round` | Analyst loop | round summaries |
+| `debug_agent_done` | After automatic or tool debug analysis | `summary`, `category`, `subtask_id`, `debug_error` |
+| `step_think` | After each subtask (incl. skip) | `reasoning`, `tools_to_consider`, `note_for_next_step`, `next_subtask_id` |
+| `data_analyst_round` | Analyst loop | `stage`, `round`, `ready`, `reasoning` |
+| `data_loader_round` | Data-ingest judge loop | `spec_propose` / `load_done` / `judge_done` |
 | `report_generating` | Report LLM started | — |
 | `run_done` | Run finished | `status`, `report` (structured) |
 
@@ -341,6 +344,12 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 BRAVE_API_KEY=...                   # Web search tool
 ANTHROPIC_API_KEY=...
 AGENT_DB_PATH=./data/agent.db
+
+# After each failed subtask, run the debug LLM and write debug_notes.json (optional)
+# DEBUG_AGENT_ON_FAILURE=1
+
+# After each subtask, run step reflection (which tools matter next, e.g. web_search before load_data). Default on.
+# STEP_THINKING=0
 ```
 
 ---

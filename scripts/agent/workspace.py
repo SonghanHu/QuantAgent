@@ -101,6 +101,15 @@ class Workspace:
             raise KeyError(f"No artifact '{name}'; available: {list(self._manifest)}")
         return json.loads(Path(meta.path).read_text())
 
+    def discard(self, name: str) -> None:
+        """Remove an artifact from the manifest and delete its file if present."""
+        meta = self._manifest.pop(name, None)
+        if meta is not None:
+            p = Path(meta.path)
+            if p.exists():
+                p.unlink()
+        self._flush_manifest()
+
     # ------------------------------------------------------------------
     # Introspection (for LLM context)
     # ------------------------------------------------------------------

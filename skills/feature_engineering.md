@@ -39,6 +39,14 @@ A **single Python script** that:
 
 ## Rules
 
+- **Index alignment (avoids `reindex` / `_reindex_for_setitem` crashes):** Any time you assign a
+  `Series` into `df[new_col] = s`, pandas aligns `s.index` to `df.index`. If they differ (e.g. you
+  took `s` from another frame, a subset, or after `reset_index` on only one side), assignment can
+  raise or silently misalign. **Safe patterns:**
+  - Prefer computing on the same object: `df["x"] = df.groupby(...).transform(...)` or vectorized ops on `df` columns.
+  - If you must use a separate `Series` `s`, ensure alignment: `df["x"] = s.reindex(df.index)` or,
+    when row counts are guaranteed identical and order matches, `df["x"] = s.to_numpy()` / `s.values`.
+  - Never do `df["x"] = other_df["y"]` unless `other_df.index.equals(df.index)`.
 - **No look-ahead:** rolling / lag features must only use data available at the current timestamp.
   The only allowed forward operation is `shift(-1)` for the target (label).
 - **No network, no subprocess.** Only `DATA_PATH`, `OUTPUT_PATH`, `OUTPUT_JSON`.

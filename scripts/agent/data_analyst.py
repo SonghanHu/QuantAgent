@@ -184,37 +184,10 @@ def run_data_analyst(
             instruction = ar.judge.next_instruction
             continue
 
-        # Final budget round: if the script succeeded, always move on — avoid a judge that never says ready.
-        if round_num == max_rounds:
-            ar.judge = JudgeDecision(
-                ready=True,
-                next_instruction="",
-                reasoning=(
-                    f"Round {round_num}/{max_rounds}: analysis script succeeded; "
-                    "moving to feature plan (no further rounds)."
-                ),
-            )
-            result.rounds.append(ar)
-            print(f"  [data_analyst] final round: skip judge, emit feature plan ({ar.judge.reasoning[:80]}...)")
-            if event_callback is not None:
-                event_callback(
-                    {
-                        "stage": "judge_done",
-                        "round": round_num,
-                        "instruction": instruction,
-                        "ready": True,
-                        "reasoning": ar.judge.reasoning,
-                        "next_instruction": "",
-                    }
-                )
-            plan = _generate_feature_plan(goal, result.rounds, data_path=data_path, model=m, client=cli)
-            result.feature_plan = plan
-            result.stopped_reason = "ready"
-            return result
-
         history = _history_digest(result.rounds)
         current = _summarize_result(analysis)
 
+        is_final_round = round_num == max_rounds
         judge_system = (
             "You are a quant research reviewer for an automated pipeline. "
             "Your job is to decide if there is ENOUGH insight to hand off to a feature-engineering step, "
@@ -222,14 +195,28 @@ def run_data_analyst(
             "Set ready=true when ALL of these hold:\n"
             "- The latest analysis script succeeded (non-empty summary or stdout with shape/columns/dtypes or key stats).\n"
             "- You understand what the rows represent (e.g. time series, cross-section) and what columns exist.\n"
-            "- There is no blocking unknown (e.g. cannot identify any plausible target column when the goal requires prediction).\n\n"
-            "Set ready=true on the FIRST round if that output is already reasonable EDA — do not ask for "
-            "'one more correlation' unless something is clearly missing or contradictory.\n\n"
-            "Set ready=false only when the output is empty, failed, or a specific gap must be fixed "
-            "(name ONE focused next_instruction).\n\n"
-            f"You are on analysis round {round_num} of {max_rounds}. "
-            f"The next round will be the last; bias strongly toward ready=true if current output is usable."
+            "- The data schema can support the **research goal** (e.g. multi-stock sector rotation needs a panel with "
+            "ticker/security id + date + sector and usually market cap; a single-name OHLCV series cannot support that).\n"
+            "- There is no blocking gap: if the goal requires columns or structure that analysis proves are missing, "
+            "that is NOT ready — the pipeline must reload data first.\n\n"
+            "Set ready=true on early rounds if EDA is already adequate for the goal and schema.\n\n"
+            "Set ready=false when the output is empty, failed, or a specific data/schema gap must be fixed "
+            "(give ONE focused next_instruction: what to load or which columns are required).\n\n"
         )
+        if is_final_round:
+            judge_system += (
+                f"**This is round {round_num} of {max_rounds} (FINAL).** There is no next analysis round. "
+                "If the goal requires data you do not have (e.g. GICS sector, multi-ticker panel, market cap) "
+                "and the current output confirms they are missing, you MUST set ready=false and set next_instruction "
+                "to a concrete reload recipe (e.g. pass many tickers to load_data, or use an external fundamentals source). "
+                "Only set ready=true if feature engineering can realistically run on this dataframe as-is.\n\n"
+                "Do not set ready=true just because the script succeeded."
+            )
+        else:
+            judge_system += (
+                f"You are on analysis round {round_num} of {max_rounds}. "
+                "If the next round is the last, still be strict about schema fit to the goal."
+            )
         judge_user = (
             f"## Research goal\n\n{goal}\n\n"
             + (f"## Earlier rounds\n\n{history}\n\n" if history.strip() else "")
@@ -265,6 +252,12 @@ def run_data_analyst(
             result.stopped_reason = "ready"
             return result
 
+        if is_final_round:
+            plan = _generate_feature_plan(goal, result.rounds, data_path=data_path, model=m, client=cli)
+            result.feature_plan = plan
+            result.stopped_reason = "max_rounds"
+            return result
+
         instruction = decision.next_instruction or "Dig deeper into the data."
 
     if result.feature_plan is None:
@@ -286,7 +279,10 @@ def _generate_feature_plan(
     system = (
         "Based on the data analysis rounds, propose concrete features for modeling. "
         "Each feature needs a name, logic (pandas pseudo-code), and rationale. "
-        "Also specify which column is the target."
+        "Also specify which column is the target (short ASCII identifier).\n\n"
+        "If the history shows the data **cannot** support the goal (wrong granularity, single ticker when a panel is "
+        "needed, missing sector/ticker/date identifiers, etc.), set ready=false, leave features empty, "
+        "and put actionable reload instructions in notes (what to fetch, which columns must exist)."
     )
     user = (
         f"## Goal\n\n{goal}\n\n"
@@ -303,5 +299,5 @@ def _generate_feature_plan(
     )
     parsed = resp.choices[0].message.parsed
     if parsed is None:
-        return FeaturePlan(ready=True, features=[], notes="Model returned no plan.")
+        return FeaturePlan(ready=False, features=[], notes="Model returned no plan.")
     return cast(FeaturePlan, parsed)

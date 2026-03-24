@@ -107,6 +107,39 @@ function formatEvent(event: AgentEvent): { icon: string; label: string; detail: 
         tone: 'border-amber-400/15 bg-amber-400/5',
       }
     }
+    case 'data_loader_round': {
+      const stage = event.stage as string
+      if (stage === 'spec_propose') {
+        return {
+          icon: '📥',
+          label: `Data load round ${event.round}`,
+          detail: 'Proposing yfinance spec',
+          tone: 'border-sky-400/15 bg-sky-400/5',
+        }
+      }
+      if (stage === 'load_done') {
+        return {
+          icon: '📊',
+          label: `Download round ${event.round}`,
+          detail: `rows=${event.rows ?? '—'} tickers=${String(event.tickers ?? '')}`.slice(0, 120),
+          tone: 'border-sky-400/15 bg-sky-400/5',
+        }
+      }
+      if (stage === 'judge_done') {
+        return {
+          icon: event.ready ? '✅' : '🔄',
+          label: `Data judge ${event.round}: ${event.ready ? 'Accepted' : 'Retry'}`,
+          detail: String(event.reasoning ?? '').slice(0, 150),
+          tone: event.ready ? 'border-emerald-400/15 bg-emerald-400/5' : 'border-sky-400/15 bg-sky-400/5',
+        }
+      }
+      return {
+        icon: '📥',
+        label: `Data loader: ${stage}`,
+        detail: '',
+        tone: 'border-sky-400/15 bg-sky-400/5',
+      }
+    }
     case 'report_generating':
       return {
         icon: '📝',
@@ -114,6 +147,26 @@ function formatEvent(event: AgentEvent): { icon: string; label: string; detail: 
         detail: 'LLM is writing the report...',
         tone: 'border-cyan-400/15 bg-cyan-400/5',
       }
+    case 'debug_agent_done': {
+      const err = event.debug_error as string | undefined
+      const cat = String(event.category ?? '')
+      return {
+        icon: err ? '⚠' : '🔧',
+        label: err ? 'Debug agent failed' : `Debug · ${cat || 'analysis'}`,
+        detail: String(event.summary ?? err ?? '').slice(0, 200),
+        tone: err ? 'border-rose-400/20 bg-rose-400/5' : 'border-orange-400/20 bg-orange-400/5',
+      }
+    }
+    case 'step_think': {
+      const tools = (event.tools_to_consider as string[] | undefined) ?? []
+      const hint = String(event.note_for_next_step ?? '').slice(0, 100)
+      return {
+        icon: '💭',
+        label: `Think · after #${event.subtask_id}`,
+        detail: tools.length ? `Next tools: ${tools.slice(0, 4).join(', ')}${hint ? ` · ${hint}` : ''}` : hint || String(event.reasoning ?? '').slice(0, 120),
+        tone: 'border-fuchsia-400/20 bg-fuchsia-400/5',
+      }
+    }
     case 'run_done': {
       const status = event.status as string
       return {
@@ -139,6 +192,43 @@ function renderExpandedSummary(event: AgentEvent, detail: string): ReactNode {
       <div className="space-y-1.5">
         <div className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Goal</div>
         <div className="text-xs leading-relaxed text-slate-300">{String(event.goal ?? '')}</div>
+      </div>
+    )
+  }
+
+  if (event.type === 'step_think') {
+    const tools = (event.tools_to_consider as string[] | undefined) ?? []
+    const err = event.think_error != null ? String(event.think_error) : ''
+    const note = String(event.note_for_next_step ?? '')
+    const nextTitle = String(event.next_subtask_title ?? '')
+    return (
+      <div className="space-y-2">
+        {err ? <div className="text-xs text-rose-400">Thinking failed: {err}</div> : null}
+        <div>
+          <div className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Reasoning</div>
+          <div className="text-xs leading-relaxed text-slate-300">{String(event.reasoning ?? '')}</div>
+        </div>
+        {tools.length > 0 && (
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Tools to consider next</div>
+            <ul className="mt-0.5 list-inside list-disc text-xs text-fuchsia-200/90">
+              {tools.map((t) => (
+                <li key={t}>{t}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {note ? (
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Note</div>
+            <div className="text-xs text-slate-400">{note}</div>
+          </div>
+        ) : null}
+        {nextTitle ? (
+          <div className="text-[11px] text-slate-500">
+            Next subtask: #{String(event.next_subtask_id ?? '')} {nextTitle}
+          </div>
+        ) : null}
       </div>
     )
   }

@@ -86,6 +86,11 @@ def run_subtask(
 
     if tool_kwargs:
         kwargs.update(tool_kwargs)
+    if fn is not None:
+        if workspace is not None and "workspace" in sig_params:
+            kwargs["workspace"] = workspace
+        if event_callback is not None and "event_callback" in sig_params:
+            kwargs["event_callback"] = event_callback
 
     try:
         output = run_tool(name, **kwargs)

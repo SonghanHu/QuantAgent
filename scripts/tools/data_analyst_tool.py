@@ -59,9 +59,21 @@ def run_data_analyst(
                 description="Feature engineering plan from data analyst sub-agent",
             )
 
-    return {
+    feats = (plan_dict or {}).get("features") or []
+    out: dict[str, Any] = {
         "stopped_reason": result.stopped_reason,
         "num_rounds": len(result.rounds),
         "round_summaries": round_summaries,
         "feature_plan": plan_dict,
+        "returncode": 0,
     }
+    if not plan_dict or not feats:
+        out["returncode"] = 1
+        out["error"] = "empty_feature_plan"
+        out["message"] = (
+            (plan_dict or {}).get("notes")
+            or "No concrete features in feature_plan — data is likely insufficient for the stated goal. "
+            "Reload data: for sector rotation use a multi-ticker panel (many symbols in load_data), "
+            "and add sector + market cap (e.g. yfinance per-ticker info or an external fundamentals source)."
+        )
+    return out

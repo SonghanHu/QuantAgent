@@ -15,6 +15,8 @@ from .analysis import run_data_analysis
 from .backtest import run_backtest
 from .data_analyst_tool import run_data_analyst
 from .data import load_data
+from .data_loader_tool import run_data_loader
+from .debug_agent_tool import run_debug_agent
 from .evaluation import evaluate_strategy
 from .features import build_features
 from .regressor import train_model
@@ -24,6 +26,7 @@ ToolFn = Callable[..., dict[str, Any]]
 
 TOOL_REGISTRY: dict[str, ToolFn] = {
     "load_data": load_data,
+    "run_data_loader": run_data_loader,
     "web_search": web_search,
     "run_data_analysis": run_data_analysis,
     "run_data_analyst": run_data_analyst,
@@ -31,6 +34,7 @@ TOOL_REGISTRY: dict[str, ToolFn] = {
     "build_alphas": build_alphas,
     "train_model": train_model,
     "run_backtest": run_backtest,
+    "run_debug_agent": run_debug_agent,
     "evaluate_strategy": evaluate_strategy,
 }
 

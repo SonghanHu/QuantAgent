@@ -7,7 +7,8 @@ The small-model router (`agent.tool_routing.resolve_subtask_tool`) reads this ca
 **Workspace:** Every run has a shared `Workspace` directory (`data/workspaces/<run_id>/`). Tools that accept a `workspace` parameter automatically receive it. Data flows between tools through workspace artifacts:
 
 - `web_search` → saves `search_context.json`
-- `load_data` → saves `raw_data.parquet`
+- `run_data_loader` → iterative judge loop → saves `raw_data.parquet` when the judge accepts the panel
+- `load_data` → one-shot download → saves `raw_data.parquet` (low-level; pipeline prefers `run_data_loader`)
 - `run_data_analysis` / `run_data_analyst` / `train_model` → auto-resolve `data_path` from `raw_data` when not explicitly set
 - `run_data_analyst` → saves `feature_plan.json`
 - `build_features` → reads `raw_data` + `feature_plan`, saves `engineered_data.parquet`
@@ -20,9 +21,9 @@ You do **not** need to pass `data_path` explicitly when the upstream `load_data`
 
 **Typical pipelines:**
 
-1. `web_search` (optional) → `load_data` → `run_data_analyst` → `build_features` → `train_model` → `run_backtest` → `evaluate_strategy`
-2. For alpha research: `web_search` → `load_data` → `run_data_analyst` → **`build_alphas`** → `train_model` → `run_backtest` → `evaluate_strategy`
-3. For single-shot analysis: `load_data` → `run_data_analysis` → …
+1. `web_search` (optional) → `run_data_loader` → `run_data_analyst` → `build_features` → `train_model` → `run_backtest` → `evaluate_strategy`
+2. For alpha research: `web_search` → `run_data_loader` → `run_data_analyst` → **`build_alphas`** → `train_model` → `run_backtest` → `evaluate_strategy`
+3. For single-shot analysis: `run_data_loader` or `load_data` → `run_data_analysis` → …
 
 Skip steps only if the subtask clearly does not need them. Use `build_alphas` instead of `build_features` when the goal involves alpha research, formulaic alphas, or WorldQuant-style factors.
 
@@ -41,10 +42,20 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
 
 ---
 
+## `run_data_loader`
+
+- **What it does:** Sub-agent: each round the model emits a **`YFinanceFetchSpec`**, the tool runs **`load_data`** (fixed path), then a **judge** decides if `raw_data` fits the **research goal** (coverage, missing prices, horizon). Repeats until accepted or max rounds. Stale `raw_data` is dropped if the judge rejects the final attempt.
+- **When to use:** Default for any subtask whose job is to **obtain** market/OHLCV data for the run. Prefer over bare `load_data` in the main pipeline.
+- **Arguments:** `goal` (required; overall objective), `max_rounds` (default `4`), `workspace` (auto-injected).
+- **Returns:** `stopped_reason`, `round_summaries`, `returncode` (`0` when judge accepted and `raw_data` exists), `last_spec`, `judge_reasoning` on failure.
+- **ReAct example:** *Thought: Need a multi-asset panel for the user’s strategy.* → *Action: run_data_loader* with `{ "goal": "<subtask + parent goal>" }`.
+
+---
+
 ## `load_data`
 
 - **What it does:** If **`tickers`** is set → downloads OHLCV via **yfinance** (one fixed code path). If omitted → small **demo stub** for pipeline tests.
-- **When to use:** Subtask mentions data ingestion, symbols, Yahoo, prices, returns, universe, fetching data, etc.
+- **When to use:** One-shot fetch when kwargs are already known, tests, or internal use by `run_data_loader`. Not the default pipeline entry for “download data” subtasks.
 - **Arguments (yfinance path):**
   - `tickers`: string (comma-separated) or list, e.g. `"SPY"` or `"SPY,TLT"` or `GC=F`
   - `period`: e.g. `1y`, `2y`, `max` (used when `start`/`end` not set)

@@ -29,12 +29,18 @@ type SubRound = {
 const TOOL_STYLE: Record<string, { dot: string; badge: string; label: string }> = {
   web_search: { dot: 'bg-teal-400', badge: 'bg-teal-400/15 text-teal-300 ring-teal-400/30', label: 'Web Search' },
   load_data: { dot: 'bg-sky-400', badge: 'bg-sky-400/15 text-sky-300 ring-sky-400/30', label: 'Data Loader' },
+  run_data_loader: {
+    dot: 'bg-sky-400',
+    badge: 'bg-sky-400/15 text-sky-300 ring-sky-400/30',
+    label: 'Data Loader+',
+  },
   run_data_analyst: { dot: 'bg-amber-400', badge: 'bg-amber-400/15 text-amber-300 ring-amber-400/30', label: 'Data Analyst' },
   run_data_analysis: { dot: 'bg-amber-400', badge: 'bg-amber-400/15 text-amber-300 ring-amber-400/30', label: 'EDA Skill' },
   build_features: { dot: 'bg-violet-400', badge: 'bg-violet-400/15 text-violet-300 ring-violet-400/30', label: 'Feature Eng.' },
   build_alphas: { dot: 'bg-fuchsia-400', badge: 'bg-fuchsia-400/15 text-fuchsia-300 ring-fuchsia-400/30', label: 'Alpha Eng.' },
   train_model: { dot: 'bg-emerald-400', badge: 'bg-emerald-400/15 text-emerald-300 ring-emerald-400/30', label: 'Model Trainer' },
   run_backtest: { dot: 'bg-cyan-400', badge: 'bg-cyan-400/15 text-cyan-300 ring-cyan-400/30', label: 'Backtester' },
+  run_debug_agent: { dot: 'bg-orange-400', badge: 'bg-orange-400/15 text-orange-300 ring-orange-400/30', label: 'Debug' },
   evaluate_strategy: { dot: 'bg-rose-400', badge: 'bg-rose-400/15 text-rose-300 ring-rose-400/30', label: 'Evaluator' },
 }
 
@@ -112,6 +118,16 @@ function derivePipeline(events: AgentEvent[]): { nodes: PipelineNode[]; topoOrde
           reasoning: ev.reasoning as string | undefined,
         })
       }
+    } else if (ev.type === 'data_loader_round' && currentSubtaskId !== null) {
+      const node = nodeMap.get(currentSubtaskId)
+      if (node) {
+        node.subRounds.push({
+          round: ev.round as number,
+          stage: ev.stage as string,
+          ready: ev.ready as boolean | undefined,
+          reasoning: ev.reasoning as string | undefined,
+        })
+      }
     }
   }
 
@@ -132,6 +148,7 @@ function ArtifactBadge({ name }: { name: string }) {
     backtest_results: '📈',
     evaluation: '✅',
     final_report: '📝',
+    debug_notes: '🐛',
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-indigo-400/10 px-2.5 py-1 text-xs text-indigo-300 ring-1 ring-indigo-400/20">

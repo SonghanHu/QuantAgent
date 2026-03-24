@@ -151,7 +151,9 @@ def run_workflow(
             return
         kind = event.get("type")
         payload = {k: v for k, v in event.items() if k != "type"}
-        if kind is not None:
+        if kind == "data_loader_round":
+            event_bus.emit("data_loader_round", run_id=resolved_app_run_id, **payload)
+        elif kind is not None:
             event_bus.emit(kind, run_id=resolved_app_run_id, **payload)
         else:
             event_bus.emit("data_analyst_round", run_id=resolved_app_run_id, **payload)
@@ -160,7 +162,46 @@ def run_workflow(
     total_subtasks = len(order)
     failed_subtask_ids: set[int] = set()
 
-    for idx, st in enumerate(order, start=1):
+    def emit_step_think(
+        completed: Subtask,
+        record: ExecutionRecord,
+        next_st: Subtask | None,
+        *,
+        artifacts_for_prompt: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        if event_bus is None:
+            return
+        if os.environ.get("STEP_THINKING", "1").strip().lower() in ("0", "false", "no"):
+            return
+        from agent.step_thinking import think_after_subtask
+        from tools import list_tools
+
+        arts = artifacts_for_prompt if artifacts_for_prompt is not None else ws.list_artifacts()
+        tw = think_after_subtask(
+            goal=state.goal,
+            workspace_artifacts=arts,
+            completed=completed,
+            record=record,
+            next_subtask=next_st,
+            allowed_tools=list_tools(),
+            model=model,
+        )
+        event_bus.emit(
+            "step_think",
+            run_id=resolved_app_run_id,
+            subtask_id=completed.id,
+            subtask_title=completed.title,
+            next_subtask_id=next_st.id if next_st else None,
+            next_subtask_title=next_st.title if next_st else None,
+            reasoning=str(tw.get("reasoning", "")),
+            tools_to_consider=list(tw.get("tools_to_consider") or []),
+            note_for_next_step=str(tw.get("note_for_next_step", "")),
+            think_error=tw.get("error"),
+        )
+
+    for i, st in enumerate(order):
+        idx = i + 1
+        next_st = order[i + 1] if i + 1 < len(order) else None
         log(f"-- subtask {st.id}: {st.title[:60]}...")
 
         upstream_failures = failed_subtask_ids & set(st.dependencies)
@@ -203,6 +244,7 @@ def run_workflow(
                 )
             if conn is not None and run_id is not None:
                 add_log(conn, run_id, "tool_execution", f"subtask {st.id}", record.model_dump())
+            emit_step_think(st, record, next_st)
             continue
 
         if event_bus is not None:
@@ -228,6 +270,53 @@ def run_workflow(
         log(f"   tool={last.tool_name} status={last.status} {last.result_summary}\n")
         if last.status == "error":
             failed_subtask_ids.add(st.id)
+            if os.environ.get("DEBUG_AGENT_ON_FAILURE", "0").strip().lower() in ("1", "true", "yes"):
+                try:
+                    from agent.debug_agent import run_debug_analysis
+
+                    dbg_model = os.environ.get("OPENAI_TASK_MODEL") or model
+                    analysis = run_debug_analysis(
+                        goal=state.goal,
+                        workspace=ws,
+                        query=last.result_summary,
+                        subtask=st,
+                        record=last,
+                        model=dbg_model,
+                    )
+                    if not analysis.get("error"):
+                        ws.save_json(
+                            "debug_notes",
+                            analysis,
+                            description="Automatic debug analysis after subtask failure",
+                        )
+                        if event_bus is not None:
+                            event_bus.emit(
+                                "workspace_update",
+                                run_id=resolved_app_run_id,
+                                artifact_name="debug_notes",
+                                artifact=ws.list_artifacts().get("debug_notes", {}),
+                            )
+                    if event_bus is not None:
+                        event_bus.emit(
+                            "debug_agent_done",
+                            run_id=resolved_app_run_id,
+                            subtask_id=st.id,
+                            tool_name=last.tool_name,
+                            summary=str(analysis.get("summary", ""))[:800],
+                            category=str(analysis.get("category", "")),
+                            debug_error=analysis.get("error"),
+                        )
+                except Exception as dbg_exc:  # noqa: BLE001
+                    if event_bus is not None:
+                        event_bus.emit(
+                            "debug_agent_done",
+                            run_id=resolved_app_run_id,
+                            subtask_id=st.id,
+                            tool_name=last.tool_name,
+                            summary="",
+                            category="",
+                            debug_error=str(dbg_exc),
+                        )
         if conn is not None and run_id is not None:
             add_log(
                 conn,
@@ -247,6 +336,7 @@ def run_workflow(
                         artifact=meta,
                     )
         previous_artifacts = current_artifacts
+        emit_step_think(st, last, next_st, artifacts_for_prompt=current_artifacts)
 
     failed = any(r.status == "error" for r in state.execution_log)
     state = state.model_copy(update={"status": "failed" if failed else "done"})

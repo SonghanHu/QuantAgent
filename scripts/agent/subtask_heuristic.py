@@ -19,6 +19,23 @@ def subtask_to_tool_name(subtask: Subtask) -> str:
     if any(
         k in t
         for k in (
+            "debug agent",
+            "run_debug",
+            "diagnose",
+            "diagnosis",
+            "root cause",
+            "traceback",
+            "fix the error",
+            "fix error",
+            "why did",
+            "pipeline failed",
+            "tool failed",
+        )
+    ):
+        return "run_debug_agent"
+    if any(
+        k in t
+        for k in (
             "web_search",
             "search the web",
             "research context",
@@ -118,9 +135,12 @@ def subtask_to_tool_name(subtask: Subtask) -> str:
             "csv",
             "yfinance",
             "yahoo",
+            "fetch prices",
+            "ingest",
+            "ohlcv",
         )
     ):
-        return "load_data"
+        return "run_data_loader"
     if any(
         k in t
         for k in (

@@ -72,7 +72,8 @@ def filter_kwargs_for_tool(tool_name: str, kwargs: dict[str, Any]) -> dict[str, 
     fn = TOOL_REGISTRY[tool_name]
     sig = inspect.signature(fn)
     allowed = set(sig.parameters)
-    return {k: v for k, v in kwargs.items() if k in allowed}
+    runtime_injected = {"workspace", "event_callback"}
+    return {k: v for k, v in kwargs.items() if k in allowed and k not in runtime_injected}
 
 
 def resolve_subtask_tool(
