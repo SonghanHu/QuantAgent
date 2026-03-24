@@ -184,18 +184,56 @@ def run_data_analyst(
             instruction = ar.judge.next_instruction
             continue
 
+        # Final budget round: if the script succeeded, always move on — avoid a judge that never says ready.
+        if round_num == max_rounds:
+            ar.judge = JudgeDecision(
+                ready=True,
+                next_instruction="",
+                reasoning=(
+                    f"Round {round_num}/{max_rounds}: analysis script succeeded; "
+                    "moving to feature plan (no further rounds)."
+                ),
+            )
+            result.rounds.append(ar)
+            print(f"  [data_analyst] final round: skip judge, emit feature plan ({ar.judge.reasoning[:80]}...)")
+            if event_callback is not None:
+                event_callback(
+                    {
+                        "stage": "judge_done",
+                        "round": round_num,
+                        "instruction": instruction,
+                        "ready": True,
+                        "reasoning": ar.judge.reasoning,
+                        "next_instruction": "",
+                    }
+                )
+            plan = _generate_feature_plan(goal, result.rounds, data_path=data_path, model=m, client=cli)
+            result.feature_plan = plan
+            result.stopped_reason = "ready"
+            return result
+
         history = _history_digest(result.rounds)
         current = _summarize_result(analysis)
 
         judge_system = (
-            "You are a quant research reviewer. "
-            "Given analysis results so far, decide: is there enough insight to propose features for modeling? "
-            "If yes, set ready=true. If no, write a specific next_instruction for the next analysis round."
+            "You are a quant research reviewer for an automated pipeline. "
+            "Your job is to decide if there is ENOUGH insight to hand off to a feature-engineering step, "
+            "not to demand exhaustive analysis.\n\n"
+            "Set ready=true when ALL of these hold:\n"
+            "- The latest analysis script succeeded (non-empty summary or stdout with shape/columns/dtypes or key stats).\n"
+            "- You understand what the rows represent (e.g. time series, cross-section) and what columns exist.\n"
+            "- There is no blocking unknown (e.g. cannot identify any plausible target column when the goal requires prediction).\n\n"
+            "Set ready=true on the FIRST round if that output is already reasonable EDA — do not ask for "
+            "'one more correlation' unless something is clearly missing or contradictory.\n\n"
+            "Set ready=false only when the output is empty, failed, or a specific gap must be fixed "
+            "(name ONE focused next_instruction).\n\n"
+            f"You are on analysis round {round_num} of {max_rounds}. "
+            f"The next round will be the last; bias strongly toward ready=true if current output is usable."
         )
         judge_user = (
             f"## Research goal\n\n{goal}\n\n"
             + (f"## Earlier rounds\n\n{history}\n\n" if history.strip() else "")
-            + f"## Current round {round_num}\n\n{current}\n"
+            + f"## Current round {round_num} / {max_rounds}\n\n{current}\n"
         )
         judge_resp = cli.chat.completions.parse(
             model=m,
