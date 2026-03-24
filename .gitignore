@@ -97,6 +97,7 @@ data/analysis_runs/
 data/backtest_runs/
 data/feature_runs/
 data/workspaces/
+data/alpha_runs/
 
 # Temporary files
 *.tmp
