@@ -134,6 +134,7 @@ def run_data_analyst(
     m = model or os.environ.get("OPENAI_SMALL_MODEL")
     if not m:
         raise RuntimeError("OPENAI_SMALL_MODEL is not set.")
+    code_model = os.environ.get("OPENAI_TASK_MODEL") or m
     cli = client or _openai_client()
     result = DataAnalystResult()
 
@@ -157,7 +158,7 @@ def run_data_analyst(
         analysis = execute_analysis_skill(
             instruction,
             data_path=data_path,
-            model=m,
+            model=code_model,
             client=cli,
             timeout_sec=timeout_sec,
         )

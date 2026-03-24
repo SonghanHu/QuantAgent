@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any, cast
@@ -70,6 +71,33 @@ def _validate_script(body: str) -> None:
             raise ValueError(f"Generated script contains forbidden pattern: {bad!r}")
 
 
+def parse_script_with_retry(
+    client: OpenAI,
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    retries: int = 2,
+) -> GeneratedAnalysisScript:
+    """Call ``chat.completions.parse`` with retries on JSON / validation errors."""
+    last_exc: Exception | None = None
+    for attempt in range(1 + retries):
+        try:
+            completion = client.chat.completions.parse(
+                model=model,
+                messages=messages,
+                response_format=GeneratedAnalysisScript,
+            )
+            parsed = completion.choices[0].message.parsed
+            if parsed is None:
+                raise RuntimeError("Model returned no structured script.")
+            return cast(GeneratedAnalysisScript, parsed)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(1.0 * (attempt + 1))
+    raise last_exc  # type: ignore[misc]
+
+
 def _openai_client() -> OpenAI:
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
@@ -94,9 +122,9 @@ def execute_analysis_skill(
     Load skill markdown, ask the model for a script, write under ``data/analysis_runs/<id>/``, run with current interpreter.
     """
     load_dotenv()
-    m = model or os.environ.get("OPENAI_SMALL_MODEL")
+    m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
     if not m:
-        raise RuntimeError("OPENAI_SMALL_MODEL is not set.")
+        raise RuntimeError("Neither OPENAI_TASK_MODEL nor OPENAI_SMALL_MODEL is set.")
 
     skill = read_skill(skill_name)
     if not skill.strip():
@@ -129,18 +157,10 @@ RUN_DIR = Path({repr(str(run_dir))})
     )
 
     cli = client or _openai_client()
-    completion = cli.chat.completions.parse(
-        model=m,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        response_format=GeneratedAnalysisScript,
+    parsed = parse_script_with_retry(
+        cli, m, [{"role": "system", "content": system}, {"role": "user", "content": user}],
     )
-    parsed = completion.choices[0].message.parsed
-    if parsed is None:
-        raise RuntimeError("Model returned no structured script.")
-    body = _clean_script(cast(GeneratedAnalysisScript, parsed).script)
+    body = _clean_script(parsed.script)
     _validate_script(body)
 
     full_source = preamble + "\n\n" + body + "\n"

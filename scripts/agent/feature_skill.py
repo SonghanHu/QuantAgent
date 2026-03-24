@@ -25,6 +25,7 @@ from .analysis_skill import (
     _clean_script,
     _tail,
     _validate_script,
+    parse_script_with_retry,
     read_skill,
 )
 
@@ -56,9 +57,9 @@ def execute_feature_skill(
     Returns dict with ``returncode``, ``output_path`` (enriched parquet), ``summary``, etc.
     """
     load_dotenv()
-    m = model or os.environ.get("OPENAI_SMALL_MODEL")
+    m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
     if not m:
-        raise RuntimeError("OPENAI_SMALL_MODEL is not set.")
+        raise RuntimeError("Neither OPENAI_TASK_MODEL nor OPENAI_SMALL_MODEL is set.")
 
     skill = read_skill("feature_engineering")
     if not skill.strip():
@@ -72,6 +73,7 @@ def execute_feature_skill(
     script_path = run_dir / "feature_eng.py"
 
     plan_json_str = json.dumps(feature_plan.get("features", []), ensure_ascii=False, indent=2, default=str)
+    target_column = str(feature_plan.get("target_column", "target"))
 
     preamble = f'''# -*- injected: do not edit names -*-
 from pathlib import Path
@@ -81,12 +83,13 @@ OUTPUT_PATH = {repr(str(output_path))}
 OUTPUT_JSON = Path({repr(str(output_json))})
 RUN_DIR = Path({repr(str(run_dir))})
 FEATURE_PLAN_JSON = {repr(plan_json_str)}
+TARGET_COLUMN = {repr(target_column)}
 '''
 
     system = (
         "You output structured JSON with a single field `script` — executable Python code only. "
         "Follow the skill specification exactly. Use only allowed imports. "
-        "The preamble defining DATA_PATH, OUTPUT_PATH, OUTPUT_JSON, RUN_DIR, FEATURE_PLAN_JSON "
+        "The preamble defining DATA_PATH, OUTPUT_PATH, OUTPUT_JSON, RUN_DIR, FEATURE_PLAN_JSON, TARGET_COLUMN "
         "will be prepended for you."
     )
     user = (
@@ -97,18 +100,10 @@ FEATURE_PLAN_JSON = {repr(plan_json_str)}
     )
 
     cli = client or _openai_client()
-    completion = cli.chat.completions.parse(
-        model=m,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        response_format=GeneratedAnalysisScript,
+    parsed = parse_script_with_retry(
+        cli, m, [{"role": "system", "content": system}, {"role": "user", "content": user}],
     )
-    parsed = completion.choices[0].message.parsed
-    if parsed is None:
-        raise RuntimeError("Model returned no structured script.")
-    body = _clean_script(cast(GeneratedAnalysisScript, parsed).script)
+    body = _clean_script(parsed.script)
     _validate_script(body)
 
     full_source = preamble + "\n\n" + body + "\n"

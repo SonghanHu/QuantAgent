@@ -26,6 +26,7 @@ from .analysis_skill import (
     _clean_script,
     _tail,
     _validate_script,
+    parse_script_with_retry,
     read_skill,
 )
 
@@ -75,9 +76,9 @@ def execute_backtest_skill(
     training results (model name, feature columns, target, metrics).
     """
     load_dotenv()
-    m = model or os.environ.get("OPENAI_SMALL_MODEL")
+    m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
     if not m:
-        raise RuntimeError("OPENAI_SMALL_MODEL is not set.")
+        raise RuntimeError("Neither OPENAI_TASK_MODEL nor OPENAI_SMALL_MODEL is set.")
 
     skill = read_skill("backtest")
     if not skill.strip():
@@ -116,18 +117,10 @@ MODEL_OUTPUT_JSON = {repr(model_str)}
     )
 
     cli = client or _openai_client()
-    completion = cli.chat.completions.parse(
-        model=m,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        response_format=GeneratedAnalysisScript,
+    parsed = parse_script_with_retry(
+        cli, m, [{"role": "system", "content": system}, {"role": "user", "content": user}],
     )
-    parsed = completion.choices[0].message.parsed
-    if parsed is None:
-        raise RuntimeError("Model returned no structured script.")
-    body = _clean_script(cast(GeneratedAnalysisScript, parsed).script)
+    body = _clean_script(parsed.script)
     _validate_script(body)
 
     full_source = preamble + "\n\n" + body + "\n"
