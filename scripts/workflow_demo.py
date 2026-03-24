@@ -22,7 +22,7 @@ from agent.events import EventBus
 from agent.executor import run_subtask
 from agent.models import Subtask
 from agent.report_gen import build_fallback_report, generate_report
-from agent.state import AgentState
+from agent.state import AgentState, ExecutionRecord
 from agent.workspace import Workspace
 from llm.task_decompose import decompose_task
 from storage.agent_log_db import add_log, create_run, open_initialized, save_final_state, save_plan, set_run_status
@@ -158,8 +158,53 @@ def run_workflow(
 
     previous_artifacts = ws.list_artifacts()
     total_subtasks = len(order)
+    failed_subtask_ids: set[int] = set()
+
     for idx, st in enumerate(order, start=1):
         log(f"-- subtask {st.id}: {st.title[:60]}...")
+
+        upstream_failures = failed_subtask_ids & set(st.dependencies)
+        if upstream_failures:
+            skip_msg = f"Skipped: upstream subtask(s) {sorted(upstream_failures)} failed"
+            log(f"   SKIP — {skip_msg}\n")
+            failed_subtask_ids.add(st.id)
+            record = ExecutionRecord(
+                subtask_id=st.id,
+                tool_name="(skipped)",
+                status="error",
+                result_summary=skip_msg,
+                output=None,
+            )
+            done = list(state.completed_subtasks)
+            if st.id not in done:
+                done.append(st.id)
+            log_list = list(state.execution_log)
+            log_list.append(record)
+            state = state.model_copy(update={"completed_subtasks": done, "execution_log": log_list, "status": "failed"})
+            if event_bus is not None:
+                event_bus.emit(
+                    "subtask_start",
+                    run_id=resolved_app_run_id,
+                    subtask_id=st.id,
+                    subtask_title=st.title,
+                    position=idx,
+                    total=total_subtasks,
+                    completed=len(state.completed_subtasks),
+                )
+                event_bus.emit(
+                    "subtask_done",
+                    run_id=resolved_app_run_id,
+                    subtask_id=st.id,
+                    subtask_title=st.title,
+                    tool_name="(skipped)",
+                    status="skipped",
+                    result_summary=skip_msg,
+                    output=None,
+                )
+            if conn is not None and run_id is not None:
+                add_log(conn, run_id, "tool_execution", f"subtask {st.id}", record.model_dump())
+            continue
+
         if event_bus is not None:
             event_bus.emit(
                 "subtask_start",
@@ -181,6 +226,8 @@ def run_workflow(
         )
         last = state.execution_log[-1]
         log(f"   tool={last.tool_name} status={last.status} {last.result_summary}\n")
+        if last.status == "error":
+            failed_subtask_ids.add(st.id)
         if conn is not None and run_id is not None:
             add_log(
                 conn,

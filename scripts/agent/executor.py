@@ -72,12 +72,17 @@ def run_subtask(
             }
         )
 
-    if workspace is not None:
-        fn = TOOL_REGISTRY.get(name)
-        if fn is not None and "workspace" in inspect.signature(fn).parameters:
+    fn = TOOL_REGISTRY.get(name)
+    if fn is not None:
+        sig_params = inspect.signature(fn).parameters
+        if workspace is not None and "workspace" in sig_params:
             kwargs.setdefault("workspace", workspace)
-        if fn is not None and "event_callback" in inspect.signature(fn).parameters and event_callback is not None:
+        if event_callback is not None and "event_callback" in sig_params:
             kwargs.setdefault("event_callback", event_callback)
+        if "goal" in sig_params and "goal" not in kwargs:
+            kwargs["goal"] = f"{subtask.title}\n\nOverall objective: {state.goal}"
+        if "query" in sig_params and "query" not in kwargs:
+            kwargs["query"] = subtask.description or subtask.title
 
     if tool_kwargs:
         kwargs.update(tool_kwargs)

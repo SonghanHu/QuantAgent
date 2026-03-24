@@ -117,6 +117,15 @@ def workspace_manifest(run_id: str) -> dict[str, Any]:
     }
 
 
+@app.get("/api/workspace/{run_id}/report.md")
+def workspace_report_md(run_id: str) -> Any:
+    ws = _open_workspace(run_id)
+    md_path = ws.root / "report.md"
+    if not md_path.is_file():
+        raise HTTPException(status_code=404, detail="report.md not found")
+    return FileResponse(md_path, media_type="text/markdown", filename=f"report-{run_id}.md")
+
+
 @app.get("/api/workspace/{run_id}/{artifact_name}")
 def workspace_artifact(run_id: str, artifact_name: str) -> dict[str, Any]:
     ws = _open_workspace(run_id)
