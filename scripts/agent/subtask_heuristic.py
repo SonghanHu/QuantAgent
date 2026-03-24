@@ -19,6 +19,18 @@ def subtask_to_tool_name(subtask: Subtask) -> str:
     if any(
         k in t
         for k in (
+            "web_search",
+            "search the web",
+            "research context",
+            "look up",
+            "find papers",
+            "alpha ideas",
+        )
+    ):
+        return "web_search"
+    if any(
+        k in t
+        for k in (
             "backtest",
             "sharpe",
             "drawdown",
@@ -72,6 +84,17 @@ def subtask_to_tool_name(subtask: Subtask) -> str:
         )
     ):
         return "train_model"
+    if any(
+        k in t
+        for k in (
+            "alpha",
+            "worldquant",
+            "formulaic",
+            "build_alphas",
+            "alpha factor",
+        )
+    ):
+        return "build_alphas"
     if any(
         k in t
         for k in (
