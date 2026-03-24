@@ -23,9 +23,9 @@ export function ProgressBar({ completed, total, currentStep, connectionStatus }:
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-white">Progress</h2>
-          <p className="text-sm text-slate-300">{currentStep || 'Waiting for run to start'}</p>
+          <p className="text-base text-slate-300">{currentStep || 'Waiting for run to start'}</p>
         </div>
-        <div className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1 text-xs text-slate-300">
+        <div className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-300">
           {connectionLabel}
         </div>
       </div>
@@ -35,7 +35,7 @@ export function ProgressBar({ completed, total, currentStep, connectionStatus }:
           style={{ width: `${percent}%` }}
         />
       </div>
-      <div className="mt-3 flex items-center justify-between text-sm text-slate-300">
+      <div className="mt-3 flex items-center justify-between text-base text-slate-300">
         <span>
           {completed} / {total || '?'} subtasks
         </span>

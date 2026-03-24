@@ -121,9 +121,9 @@ function extractMetrics(events: AgentEvent[]): RunMetrics | null {
 function MetricCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-slate-900/50 px-3 py-2.5">
-      <div className="text-[10px] uppercase tracking-widest text-slate-500">{label}</div>
+      <div className="text-xs uppercase tracking-widest text-slate-500">{label}</div>
       <div className="mt-0.5 text-lg font-semibold text-white">{value}</div>
-      {sub && <div className="text-[11px] text-slate-500">{sub}</div>}
+      {sub && <div className="text-sm text-slate-500">{sub}</div>}
     </div>
   )
 }
@@ -151,7 +151,7 @@ function renderInlineMarkdown(text: string): ReactNode[] {
       }
       if (part.startsWith('`') && part.endsWith('`')) {
         return (
-          <code key={index} className="rounded bg-slate-800 px-1 py-0.5 text-[11px] text-cyan-300">
+          <code key={index} className="rounded bg-slate-800 px-1 py-0.5 text-sm text-cyan-300">
             {part.slice(1, -1)}
           </code>
         )
@@ -261,7 +261,7 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
     return (
       <section className="rounded-3xl border border-white/10 bg-white/5 p-5">
         <h2 className="text-lg font-semibold text-white">Final report</h2>
-        <p className="mt-1 text-sm text-slate-400">The report generates when the run completes.</p>
+        <p className="mt-1 text-base text-slate-400">The report generates when the run completes.</p>
       </section>
     )
   }
@@ -272,7 +272,7 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
         <h2 className="text-lg font-semibold text-white">Final report</h2>
         <div className="mt-3 flex items-center gap-3 rounded-2xl border border-cyan-400/20 bg-cyan-400/5 px-4 py-4">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
-          <span className="text-sm text-cyan-300">Generating report with LLM...</span>
+          <span className="text-base text-cyan-300">Generating report with LLM...</span>
         </div>
       </section>
     )
@@ -282,7 +282,7 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
     return (
       <section className="rounded-3xl border border-white/10 bg-white/5 p-5">
         <h2 className="text-lg font-semibold text-white">Final report</h2>
-        <p className="mt-1 text-sm text-slate-400">The report generates when the run completes.</p>
+        <p className="mt-1 text-base text-slate-400">The report generates when the run completes.</p>
       </section>
     )
   }
@@ -302,7 +302,7 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
         <div className="flex items-center gap-2">
           {reportMarkdown && (
             <button
-              className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+              className="rounded-full border border-white/10 px-3 py-1.5 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
               onClick={() => {
                 const blob = new Blob([reportMarkdown], { type: 'text/markdown' })
                 const url = URL.createObjectURL(blob)
@@ -316,7 +316,7 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
               ↓ .md
             </button>
           )}
-          <span className={`rounded-full border px-3 py-1 text-xs font-medium ${statusBg} ${statusColor}`}>
+          <span className={`rounded-full border px-3 py-1.5 text-sm font-medium ${statusBg} ${statusColor}`}>
             {metrics.status}
           </span>
         </div>
@@ -326,7 +326,7 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
       {report ? (
         <div className="space-y-4">
           {isFallbackReport(report) && (
-            <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-200/90">
+            <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-3 py-2.5 text-sm text-amber-200/90">
               Showing a <strong>template summary</strong> (execution log + artifacts). The primary LLM report step
               failed or your model may not support structured output — see Limitations below or server logs.
             </div>
@@ -334,8 +334,8 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
           {/* Title + executive summary */}
           <div className="rounded-2xl border border-white/[0.06] bg-slate-900/40 p-4">
             <h3 className="text-base font-semibold text-white">{report.title}</h3>
-            <p className="mt-2 text-sm leading-relaxed text-slate-300">{report.executive_summary}</p>
-            <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-slate-500">
+            <p className="mt-2 text-base leading-relaxed text-slate-300">{report.executive_summary}</p>
+            <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-500">
               <span>
                 {metrics.completedSubtasks}/{metrics.totalSubtasks} subtasks
               </span>
@@ -349,7 +349,7 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
           {/* Key metrics grid */}
           {(metrics.modelMetrics || metrics.backtestMetrics) && (
             <div>
-              <div className="mb-2 text-xs font-medium uppercase tracking-widest text-slate-500">
+              <div className="mb-2 text-sm font-medium uppercase tracking-widest text-slate-500">
                 Key metrics
               </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -404,8 +404,8 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
                   key={i}
                   className="rounded-2xl border border-white/[0.06] bg-slate-900/40 p-4"
                 >
-                  <h4 className="mb-2 text-sm font-semibold text-white">{section.heading}</h4>
-                  <div className="space-y-1 text-sm leading-relaxed text-slate-400">
+                  <h4 className="mb-2 text-base font-semibold text-white">{section.heading}</h4>
+                  <div className="space-y-1 text-base leading-relaxed text-slate-400">
                     {renderMarkdown(section.body)}
                   </div>
                 </div>
@@ -416,10 +416,10 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
           {/* Key findings */}
           {(report.key_findings ?? []).length > 0 && (
             <div className="rounded-2xl border border-emerald-400/15 bg-emerald-400/5 p-4">
-              <div className="mb-2 text-xs font-medium uppercase tracking-widest text-emerald-400/70">
+              <div className="mb-2 text-sm font-medium uppercase tracking-widest text-emerald-400/70">
                 Key findings
               </div>
-              <ul className="space-y-1 text-sm text-slate-300">
+              <ul className="space-y-1 text-base text-slate-300">
                 {(report.key_findings ?? []).map((f, i) => (
                   <li key={i} className="flex gap-2">
                     <span className="flex-shrink-0 text-emerald-400">•</span>
@@ -433,10 +433,10 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
           {/* Recommendations */}
           {(report.recommendations ?? []).length > 0 && (
             <div className="rounded-2xl border border-sky-400/15 bg-sky-400/5 p-4">
-              <div className="mb-2 text-xs font-medium uppercase tracking-widest text-sky-400/70">
+              <div className="mb-2 text-sm font-medium uppercase tracking-widest text-sky-400/70">
                 Recommendations
               </div>
-              <ul className="space-y-1 text-sm text-slate-300">
+              <ul className="space-y-1 text-base text-slate-300">
                 {(report.recommendations ?? []).map((r, i) => (
                   <li key={i} className="flex gap-2">
                     <span className="flex-shrink-0 text-sky-400">→</span>
@@ -450,10 +450,10 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
           {/* Limitations */}
           {(report.limitations ?? []).length > 0 && (
             <div className="rounded-2xl border border-amber-400/15 bg-amber-400/5 p-4">
-              <div className="mb-2 text-xs font-medium uppercase tracking-widest text-amber-400/70">
+              <div className="mb-2 text-sm font-medium uppercase tracking-widest text-amber-400/70">
                 Limitations
               </div>
-              <ul className="space-y-1 text-sm text-slate-400">
+              <ul className="space-y-1 text-base text-slate-400">
                 {(report.limitations ?? []).map((l, i) => (
                   <li key={i} className="flex gap-2">
                     <span className="flex-shrink-0 text-amber-400">⚠</span>
@@ -467,10 +467,10 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
           {/* Conclusion */}
           {report.conclusion && (
             <div className="rounded-2xl border border-white/[0.06] bg-slate-900/40 p-4">
-              <div className="mb-1 text-xs font-medium uppercase tracking-widest text-slate-500">
+              <div className="mb-1 text-sm font-medium uppercase tracking-widest text-slate-500">
                 Conclusion
               </div>
-              <p className="text-sm font-medium leading-relaxed text-slate-200">
+              <p className="text-base font-medium leading-relaxed text-slate-200">
                 {report.conclusion}
               </p>
             </div>
@@ -478,14 +478,14 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
 
           {/* Agent breakdown (collapsed) */}
           <details className="group">
-            <summary className="cursor-pointer text-xs font-medium uppercase tracking-widest text-slate-500 hover:text-slate-400">
+            <summary className="cursor-pointer text-sm font-medium uppercase tracking-widest text-slate-500 hover:text-slate-400">
               Agent breakdown & artifacts
             </summary>
             <div className="mt-2 space-y-1">
               {Object.entries(metrics.toolBreakdown).map(([tool, stats]) => (
                 <div
                   key={tool}
-                  className="flex items-center justify-between rounded-lg border border-white/[0.04] bg-slate-900/30 px-3 py-1.5 text-xs"
+                  className="flex items-center justify-between rounded-lg border border-white/[0.04] bg-slate-900/30 px-3 py-2 text-sm"
                 >
                   <span className="font-medium text-slate-300">{tool}</span>
                   <div className="flex gap-2 text-slate-500">
@@ -500,7 +500,7 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
                   {[...new Set(metrics.artifacts)].map((a) => (
                     <span
                       key={a}
-                      className="rounded-full bg-indigo-400/10 px-2.5 py-1 text-[11px] text-indigo-300 ring-1 ring-indigo-400/20"
+                      className="rounded-full bg-indigo-400/10 px-2.5 py-1 text-sm text-indigo-300 ring-1 ring-indigo-400/20"
                     >
                       {a}
                     </span>
@@ -514,10 +514,10 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
         /* Fallback: no LLM report available */
         <div className="space-y-4">
           <div className="rounded-2xl border border-white/[0.06] bg-slate-900/40 p-4">
-            <div className="text-sm font-medium text-white">
+            <div className="text-base font-medium text-white">
               {metrics.goalSummary || metrics.goal}
             </div>
-            <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-400">
+            <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-400">
               <span>
                 {metrics.completedSubtasks}/{metrics.totalSubtasks} subtasks completed
               </span>
@@ -527,7 +527,7 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
               {metrics.durationSec !== undefined && <span>{metrics.durationSec}s elapsed</span>}
             </div>
           </div>
-          <div className="rounded-xl border border-amber-400/15 bg-amber-400/5 p-3 text-xs text-amber-300/80">
+          <div className="rounded-xl border border-amber-400/15 bg-amber-400/5 p-3 text-sm text-amber-300/80">
             LLM report was not generated for this run. Check the log for details.
           </div>
         </div>

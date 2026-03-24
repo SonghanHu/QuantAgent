@@ -87,24 +87,24 @@ export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDial
       <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-medium text-cyan-300">Pre-run clarification</div>
-            <div className="text-xs text-slate-400">Let the agent understand your goal before executing</div>
+            <div className="text-base font-medium text-cyan-300">Pre-run clarification</div>
+            <div className="text-sm text-slate-400">Let the agent understand your goal before executing</div>
           </div>
           <div className="flex gap-2">
             <button
-              className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20"
+              className="rounded-full border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:border-white/20"
               onClick={onCancel}
             >
               Cancel
             </button>
             <button
-              className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20"
+              className="rounded-full border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:border-white/20"
               onClick={onSkip}
             >
               Run now
             </button>
             <button
-              className="rounded-full bg-cyan-400/20 px-3 py-1.5 text-xs font-medium text-cyan-300 transition hover:bg-cyan-400/30"
+              className="rounded-full bg-cyan-400/20 px-3 py-2 text-sm font-medium text-cyan-300 transition hover:bg-cyan-400/30"
               onClick={handleStart}
             >
               Clarify goal
@@ -118,25 +118,25 @@ export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDial
   if (error) {
     return (
       <div className="space-y-3 rounded-2xl border border-rose-400/20 bg-rose-400/5 p-4">
-        <div className="text-sm font-medium text-rose-300">Clarification is unavailable</div>
-        <p className="text-sm text-slate-300">
+        <div className="text-base font-medium text-rose-300">Clarification is unavailable</div>
+        <p className="text-base text-slate-300">
           {error}. You can retry, run with the current goal, or cancel.
         </p>
         <div className="flex flex-wrap gap-2">
           <button
-            className="rounded-xl bg-rose-400/15 px-3 py-2 text-xs font-medium text-rose-200 transition hover:bg-rose-400/25"
+            className="rounded-xl bg-rose-400/15 px-3 py-2.5 text-sm font-medium text-rose-200 transition hover:bg-rose-400/25"
             onClick={handleRetry}
           >
             Retry
           </button>
           <button
-            className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-300 transition hover:border-white/20"
+            className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-300 transition hover:border-white/20"
             onClick={onSkip}
           >
             Run now
           </button>
           <button
-            className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-400 transition hover:border-white/20"
+            className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-400 transition hover:border-white/20"
             onClick={onCancel}
           >
             Cancel
@@ -151,7 +151,7 @@ export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDial
       <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
         <div className="flex items-center gap-3">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
-          <span className="text-sm text-cyan-300">Analyzing your goal...</span>
+          <span className="text-base text-cyan-300">Analyzing your goal...</span>
         </div>
       </div>
     )
@@ -164,15 +164,15 @@ export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDial
       <div className="space-y-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-4">
         <div className="flex items-center gap-2">
           <span className="text-emerald-400">✓</span>
-          <span className="text-sm font-medium text-emerald-300">Goal understood</span>
+          <span className="text-base font-medium text-emerald-300">Goal understood</span>
         </div>
         {result.summary && (
-          <p className="text-sm text-slate-300">{result.summary}</p>
+          <p className="text-base text-slate-300">{result.summary}</p>
         )}
         {result.assumptions.length > 0 && (
           <div>
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-widest text-slate-500">Assumptions</div>
-            <ul className="space-y-0.5 text-xs text-slate-400">
+            <div className="mb-1 text-xs font-medium uppercase tracking-widest text-slate-500">Assumptions</div>
+            <ul className="space-y-0.5 text-sm text-slate-400">
               {result.assumptions.filter(Boolean).map((a, i) => (
                 <li key={i} className="flex gap-1.5">
                   <span className="text-slate-600">•</span> {a}
@@ -183,19 +183,19 @@ export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDial
         )}
         <div className="flex gap-2 pt-1">
           <button
-            className="rounded-full bg-emerald-400/20 px-4 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-400/30"
+            className="rounded-full bg-emerald-400/20 px-4 py-2 text-sm font-medium text-emerald-300 transition hover:bg-emerald-400/30"
             onClick={() => onConfirm(result.refined_goal || goal)}
           >
             Use refined goal
           </button>
           <button
-            className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-400 transition hover:border-white/20"
+            className="rounded-full border border-white/10 px-3 py-2 text-sm text-slate-400 transition hover:border-white/20"
             onClick={onSkip}
           >
             Run original goal
           </button>
           <button
-            className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-400 transition hover:border-white/20"
+            className="rounded-full border border-white/10 px-3 py-2 text-sm text-slate-400 transition hover:border-white/20"
             onClick={onCancel}
           >
             Cancel
@@ -207,10 +207,10 @@ export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDial
 
   return (
     <div className="space-y-3 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
-      <div className="text-sm font-medium text-amber-300">A few questions before starting:</div>
+      <div className="text-base font-medium text-amber-300">A few questions before starting:</div>
       <ol className="space-y-1.5">
         {result.questions.map((q, i) => (
-          <li key={i} className="flex gap-2 text-sm text-slate-300">
+          <li key={i} className="flex gap-2 text-base text-slate-300">
             <span className="flex-shrink-0 font-medium text-amber-400">{i + 1}.</span>
             {q}
           </li>
@@ -218,33 +218,33 @@ export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDial
       </ol>
       <div className="flex gap-2">
         <input
-          className="flex-1 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+          className="flex-1 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-base text-slate-100 outline-none placeholder:text-slate-500"
           placeholder="Your answers..."
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleAnswer()}
         />
         <button
-          className="rounded-xl bg-amber-400/20 px-3 py-2 text-xs font-medium text-amber-300 transition hover:bg-amber-400/30"
+          className="rounded-xl bg-amber-400/20 px-3 py-2.5 text-sm font-medium text-amber-300 transition hover:bg-amber-400/30"
           onClick={handleAnswer}
           disabled={!answer.trim()}
         >
           Answer
         </button>
         <button
-          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-400 transition hover:border-white/20"
+          className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-400 transition hover:border-white/20"
           onClick={handleDefaults}
         >
           Use defaults
         </button>
         <button
-          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-300 transition hover:border-white/20"
+          className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-300 transition hover:border-white/20"
           onClick={onSkip}
         >
           Run now
         </button>
         <button
-          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-500 transition hover:border-white/20"
+          className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-500 transition hover:border-white/20"
           onClick={onCancel}
         >
           Cancel

@@ -137,7 +137,7 @@ function renderExpandedSummary(event: AgentEvent, detail: string): ReactNode {
   if (event.type === 'run_start') {
     return (
       <div className="space-y-1.5">
-        <div className="text-[10px] font-medium uppercase tracking-widest text-slate-500">Goal</div>
+        <div className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Goal</div>
         <div className="text-xs leading-relaxed text-slate-300">{String(event.goal ?? '')}</div>
       </div>
     )
@@ -168,17 +168,17 @@ export function LogPanel({ events }: LogPanelProps) {
   }
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/5 p-3 sm:p-4">
+    <section className="rounded-2xl border border-white/10 bg-white/5 p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold tracking-wide text-white">Live log</h2>
-          <div className="tabular-nums text-[10px] text-slate-500">{events.length} events</div>
+          <div className="tabular-nums text-[11px] text-slate-500">{events.length} events</div>
         </div>
         <div className="flex items-center gap-2">
           {!autoScroll && events.length > 0 && (
             <button
               type="button"
-              className="rounded-full border border-cyan-400/20 px-2 py-1 text-[10px] text-cyan-300 transition hover:border-cyan-400/40 hover:bg-cyan-400/10"
+              className="rounded-full border border-cyan-400/20 px-2 py-1 text-[11px] text-cyan-300 transition hover:border-cyan-400/40 hover:bg-cyan-400/10"
               onClick={() => {
                 setAutoScroll(true)
                 requestAnimationFrame(() => {
@@ -193,7 +193,7 @@ export function LogPanel({ events }: LogPanelProps) {
           )}
           <button
             type="button"
-            className={`rounded-full border px-2 py-1 text-[10px] transition ${
+            className={`rounded-full border px-2 py-1 text-[11px] transition ${
               autoScroll
                 ? 'border-cyan-400/20 bg-cyan-400/10 text-cyan-300'
                 : 'border-white/10 text-slate-400 hover:border-white/20'
@@ -206,7 +206,7 @@ export function LogPanel({ events }: LogPanelProps) {
       </div>
       <div
         ref={listRef}
-        className="max-h-[min(36rem,70vh)] space-y-1 overflow-auto pr-0.5"
+        className="max-h-[min(30rem,60vh)] space-y-1 overflow-auto pr-0.5"
         onScroll={handleScroll}
       >
         {events.length === 0 ? (
@@ -229,16 +229,16 @@ export function LogPanel({ events }: LogPanelProps) {
                     <span className="mt-0.5 flex-shrink-0 text-[11px] leading-none opacity-90">{icon}</span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline justify-between gap-2">
-                        <span className="truncate text-[11px] font-medium leading-snug text-slate-200">{label}</span>
+                        <span className="truncate text-[13px] font-medium leading-snug text-slate-200">{label}</span>
                         <span className="flex items-center gap-1.5">
-                          <span className="flex-shrink-0 text-[9px] tabular-nums text-slate-600">
+                          <span className="flex-shrink-0 text-[10px] tabular-nums text-slate-600">
                             {new Date(event.ts).toLocaleTimeString()}
                           </span>
-                          <span className="text-[10px] text-slate-500">{isExpanded ? '−' : '+'}</span>
+                          <span className="text-[11px] text-slate-500">{isExpanded ? '−' : '+'}</span>
                         </span>
                       </div>
                       {detail && !isExpanded && (
-                        <div className="mt-0.5 truncate text-[10px] leading-snug text-slate-500">{detail}</div>
+                        <div className="mt-0.5 truncate text-xs leading-snug text-slate-500">{detail}</div>
                       )}
                     </div>
                   </div>
@@ -249,10 +249,10 @@ export function LogPanel({ events }: LogPanelProps) {
                       {renderExpandedSummary(event, detail)}
                     </div>
                     <details className="rounded-md bg-slate-950/30 p-2">
-                      <summary className="cursor-pointer text-[10px] text-slate-500 hover:text-slate-400">
+                      <summary className="cursor-pointer text-[11px] text-slate-500 hover:text-slate-400">
                         Raw event
                       </summary>
-                      <pre className="mt-2 max-h-40 overflow-auto text-[10px] leading-relaxed text-slate-400">
+                      <pre className="mt-2 max-h-40 overflow-auto text-[11px] leading-relaxed text-slate-400">
                         {JSON.stringify(event, null, 2)}
                       </pre>
                     </details>

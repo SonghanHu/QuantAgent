@@ -134,7 +134,7 @@ function ArtifactBadge({ name }: { name: string }) {
     final_report: '📝',
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-400/10 px-2 py-0.5 text-[10px] text-indigo-300 ring-1 ring-indigo-400/20">
+    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-400/10 px-2.5 py-1 text-xs text-indigo-300 ring-1 ring-indigo-400/20">
       {icons[name] ?? '📄'} {name}
     </span>
   )
@@ -148,7 +148,7 @@ function SubRoundIndicator({ rounds }: { rounds: SubRound[] }) {
 
   return (
     <div className="mt-2 rounded-xl border border-amber-400/20 bg-amber-400/5 px-3 py-2">
-      <div className="mb-1.5 text-[10px] font-medium uppercase tracking-widest text-amber-300/70">
+      <div className="mb-1.5 text-xs font-medium uppercase tracking-widest text-amber-300/70">
         Sub-agent loop · {totalRounds} round{totalRounds > 1 ? 's' : ''}
       </div>
       <div className="flex gap-1">
@@ -160,7 +160,7 @@ function SubRoundIndicator({ rounds }: { rounds: SubRound[] }) {
           return (
             <div
               key={round}
-              className={`group relative flex h-5 w-5 items-center justify-center rounded-md text-[10px] font-bold ${
+              className={`group relative flex h-6 w-6 items-center justify-center rounded-md text-xs font-bold ${
                 isReady
                   ? 'bg-emerald-400/20 text-emerald-300'
                   : isFailed
@@ -170,7 +170,7 @@ function SubRoundIndicator({ rounds }: { rounds: SubRound[] }) {
             >
               {round}
               {judge?.reasoning && (
-                <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-56 -translate-x-1/2 rounded-lg border border-white/10 bg-slate-900 p-2 text-[11px] font-normal leading-snug text-slate-300 shadow-xl group-hover:block">
+                <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-56 -translate-x-1/2 rounded-lg border border-white/10 bg-slate-900 p-2 text-sm font-normal leading-snug text-slate-300 shadow-xl group-hover:block">
                   {judge.reasoning.slice(0, 200)}
                 </div>
               )}
@@ -179,12 +179,12 @@ function SubRoundIndicator({ rounds }: { rounds: SubRound[] }) {
         })}
       </div>
       {readyRound && (
-        <div className="mt-1 text-[10px] text-emerald-400/80">
+        <div className="mt-1 text-xs text-emerald-400/80">
           ✓ Ready at round {readyRound.round}
         </div>
       )}
       {!readyRound && totalRounds > 0 && (
-        <div className="mt-1 text-[10px] text-amber-400/60">
+        <div className="mt-1 text-xs text-amber-400/60">
           Hit max rounds — forced feature plan
         </div>
       )}
@@ -199,7 +199,7 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
     return (
       <section className="rounded-3xl border border-white/10 bg-white/5 p-5">
         <h2 className="text-lg font-semibold text-white">Agent Workflow</h2>
-        <p className="mt-1 text-sm text-slate-400">The task decomposition and agent pipeline appear here once the run starts.</p>
+        <p className="mt-1 text-base text-slate-400">The task decomposition and agent pipeline appear here once the run starts.</p>
       </section>
     )
   }
@@ -219,7 +219,7 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-white">Agent Workflow</h2>
-          <p className="text-sm text-slate-400">
+          <p className="text-base text-slate-400">
             {orderedNodes.length} subtasks · {toolGroups.size} agents collaborating
           </p>
         </div>
@@ -229,7 +229,7 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
             return (
               <span
                 key={tool}
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] ring-1 ${style.badge}`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm ring-1 ${style.badge}`}
               >
                 <span className={`h-2 w-2 rounded-full ${style.dot}`} />
                 {style.label} ×{count}
@@ -264,10 +264,10 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
                       ? STATUS_ICON[node.status]
                       : node.id}
                   </div>
-                  <div className="mt-1 w-12 truncate text-center text-[9px] text-slate-500">
+                  <div className="mt-1 w-14 truncate text-center text-[11px] text-slate-500">
                     {node.title.slice(0, 6)}
                   </div>
-                  <div className="pointer-events-none absolute bottom-full z-20 mb-2 hidden w-48 rounded-lg border border-white/10 bg-slate-900 p-2 text-xs text-slate-300 shadow-xl group-hover:block">
+                  <div className="pointer-events-none absolute bottom-full z-20 mb-2 hidden w-56 rounded-lg border border-white/10 bg-slate-900 p-2 text-sm text-slate-300 shadow-xl group-hover:block">
                     <div className="font-medium text-white">{node.title}</div>
                     {node.toolName && (
                       <div className={`mt-1 ${getToolStyle(node.toolName).badge.split(' ')[1]}`}>
@@ -317,20 +317,20 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-500">#{node.id}</span>
-                      <span className="truncate text-sm font-medium text-slate-100">
+                      <span className="text-sm font-bold text-slate-500">#{node.id}</span>
+                      <span className="truncate text-base font-medium text-slate-100">
                         {node.title}
                       </span>
                     </div>
                     {node.dependencies.length > 0 && (
-                      <div className="mt-0.5 text-[10px] text-slate-600">
+                      <div className="mt-0.5 text-sm text-slate-600">
                         depends on {node.dependencies.map((d) => `#${d}`).join(', ')}
                       </div>
                     )}
                   </div>
                   {node.toolName && (
                     <span
-                      className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] ring-1 ${style.badge}`}
+                      className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm ring-1 ${style.badge}`}
                     >
                       <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
                       {style.label}
@@ -339,7 +339,7 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
                 </div>
 
                 {node.resultSummary && (
-                  <div className="mt-1.5 text-xs text-slate-400">{node.resultSummary}</div>
+                  <div className="mt-1.5 text-sm text-slate-400">{node.resultSummary}</div>
                 )}
 
                 {node.artifacts.length > 0 && (

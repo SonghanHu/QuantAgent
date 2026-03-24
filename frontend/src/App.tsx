@@ -167,18 +167,17 @@ function App() {
 
         <WorkflowGraph events={events as AgentEvent[]} />
 
-        <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+        <ReportPanel events={events as AgentEvent[]} runId={runId} />
+
+        <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+          <ArtifactPanel
+            manifest={manifest}
+            selectedArtifact={selectedArtifact}
+            preview={preview}
+            isLoading={isPreviewLoading}
+            onSelect={(artifactName) => void loadArtifact(artifactName)}
+          />
           <LogPanel events={events as AgentEvent[]} />
-          <div className="space-y-5">
-            <ArtifactPanel
-              manifest={manifest}
-              selectedArtifact={selectedArtifact}
-              preview={preview}
-              isLoading={isPreviewLoading}
-              onSelect={(artifactName) => void loadArtifact(artifactName)}
-            />
-            <ReportPanel events={events as AgentEvent[]} runId={runId} />
-          </div>
         </div>
       </div>
     </main>
