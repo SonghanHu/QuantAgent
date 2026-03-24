@@ -12,17 +12,20 @@ type ClarifyDialogProps = {
   goal: string
   onConfirm: (refinedGoal: string) => void
   onSkip: () => void
+  onCancel: () => void
 }
 
-export function ClarifyDialog({ goal, onConfirm, onSkip }: ClarifyDialogProps) {
+export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDialogProps) {
   const [conversation, setConversation] = useState<{ role: string; content: string }[]>([])
   const [result, setResult] = useState<ClarifyResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [answer, setAnswer] = useState('')
   const [started, setStarted] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function clarify(conv: { role: string; content: string }[]) {
     setLoading(true)
+    setError(null)
     try {
       const res = await fetch('/api/clarify', {
         method: 'POST',
@@ -32,8 +35,9 @@ export function ClarifyDialog({ goal, onConfirm, onSkip }: ClarifyDialogProps) {
       if (!res.ok) throw new Error(`clarify failed: ${res.status}`)
       const data = (await res.json()) as ClarifyResult
       setResult(data)
-    } catch {
-      onSkip()
+    } catch (err: unknown) {
+      setResult(null)
+      setError(err instanceof Error ? err.message : 'Unable to clarify the goal right now.')
     } finally {
       setLoading(false)
     }
@@ -41,6 +45,7 @@ export function ClarifyDialog({ goal, onConfirm, onSkip }: ClarifyDialogProps) {
 
   function handleStart() {
     setStarted(true)
+    setResult(null)
     void clarify([])
   }
 
@@ -55,6 +60,7 @@ export function ClarifyDialog({ goal, onConfirm, onSkip }: ClarifyDialogProps) {
     setConversation(newConv)
     setAnswer('')
     setResult(null)
+    setError(null)
     void clarify(newConv)
   }
 
@@ -68,7 +74,12 @@ export function ClarifyDialog({ goal, onConfirm, onSkip }: ClarifyDialogProps) {
     ]
     setConversation(newConv)
     setResult(null)
+    setError(null)
     void clarify(newConv)
+  }
+
+  function handleRetry() {
+    void clarify(conversation)
   }
 
   if (!started) {
@@ -82,9 +93,15 @@ export function ClarifyDialog({ goal, onConfirm, onSkip }: ClarifyDialogProps) {
           <div className="flex gap-2">
             <button
               className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20"
+              onClick={onCancel}
+            >
+              Cancel
+            </button>
+            <button
+              className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20"
               onClick={onSkip}
             >
-              Skip
+              Run now
             </button>
             <button
               className="rounded-full bg-cyan-400/20 px-3 py-1.5 text-xs font-medium text-cyan-300 transition hover:bg-cyan-400/30"
@@ -93,6 +110,37 @@ export function ClarifyDialog({ goal, onConfirm, onSkip }: ClarifyDialogProps) {
               Clarify goal
             </button>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-3 rounded-2xl border border-rose-400/20 bg-rose-400/5 p-4">
+        <div className="text-sm font-medium text-rose-300">Clarification is unavailable</div>
+        <p className="text-sm text-slate-300">
+          {error}. You can retry, run with the current goal, or cancel.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="rounded-xl bg-rose-400/15 px-3 py-2 text-xs font-medium text-rose-200 transition hover:bg-rose-400/25"
+            onClick={handleRetry}
+          >
+            Retry
+          </button>
+          <button
+            className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-300 transition hover:border-white/20"
+            onClick={onSkip}
+          >
+            Run now
+          </button>
+          <button
+            className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-400 transition hover:border-white/20"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
         </div>
       </div>
     )
@@ -138,13 +186,19 @@ export function ClarifyDialog({ goal, onConfirm, onSkip }: ClarifyDialogProps) {
             className="rounded-full bg-emerald-400/20 px-4 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-400/30"
             onClick={() => onConfirm(result.refined_goal || goal)}
           >
-            Proceed with refined goal
+            Use refined goal
           </button>
           <button
             className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-400 transition hover:border-white/20"
             onClick={onSkip}
           >
-            Use original goal
+            Run original goal
+          </button>
+          <button
+            className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-400 transition hover:border-white/20"
+            onClick={onCancel}
+          >
+            Cancel
           </button>
         </div>
       </div>
@@ -184,10 +238,16 @@ export function ClarifyDialog({ goal, onConfirm, onSkip }: ClarifyDialogProps) {
           Use defaults
         </button>
         <button
-          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-500 transition hover:border-white/20"
+          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-300 transition hover:border-white/20"
           onClick={onSkip}
         >
-          Skip
+          Run now
+        </button>
+        <button
+          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-500 transition hover:border-white/20"
+          onClick={onCancel}
+        >
+          Cancel
         </button>
       </div>
     </div>

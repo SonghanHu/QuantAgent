@@ -4,10 +4,11 @@ type ArtifactPanelProps = {
   manifest: WorkspaceManifest | null
   selectedArtifact: string | null
   preview: ArtifactPreview | null
+  isLoading: boolean
   onSelect: (artifactName: string) => void
 }
 
-export function ArtifactPanel({ manifest, selectedArtifact, preview, onSelect }: ArtifactPanelProps) {
+export function ArtifactPanel({ manifest, selectedArtifact, preview, isLoading, onSelect }: ArtifactPanelProps) {
   const artifactEntries = Object.entries(manifest?.artifacts ?? {})
 
   return (
@@ -31,6 +32,7 @@ export function ArtifactPanel({ manifest, selectedArtifact, preview, onSelect }:
                     ? 'border-cyan-400/50 bg-cyan-400/10'
                     : 'border-white/10 bg-slate-900/70 hover:border-white/20'
                 }`}
+                aria-pressed={selectedArtifact === name}
                 onClick={() => onSelect(name)}
               >
                 <div className="font-medium text-white">{name}</div>
@@ -43,7 +45,15 @@ export function ArtifactPanel({ manifest, selectedArtifact, preview, onSelect }:
           )}
         </div>
         <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-4">
-          {!preview ? (
+          {isLoading && selectedArtifact ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 text-sm text-cyan-300">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+                Loading `{selectedArtifact}`...
+              </div>
+              <div className="h-24 rounded-xl border border-dashed border-white/10 bg-slate-900/50" />
+            </div>
+          ) : !preview ? (
             <div className="text-sm text-slate-400">Select an artifact to preview it.</div>
           ) : preview.kind === 'json' ? (
             <pre className="max-h-[26rem] overflow-auto whitespace-pre-wrap text-sm text-slate-100">

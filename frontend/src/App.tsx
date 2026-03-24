@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { ArtifactPanel } from './components/ArtifactPanel'
 import { ClarifyDialog } from './components/ClarifyDialog'
@@ -19,9 +19,11 @@ function App() {
   const [manifest, setManifest] = useState<WorkspaceManifest | null>(null)
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null)
   const [preview, setPreview] = useState<ArtifactPreview | null>(null)
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [showClarify, setShowClarify] = useState(false)
+  const artifactRequestIdRef = useRef(0)
   const { events, connectionStatus } = useAgentSocket(runId)
   const latestEvent = events.at(-1) ?? null
 
@@ -80,12 +82,18 @@ function App() {
     void doStartRun(goal)
   }
 
+  function handleClarifyCancel() {
+    setShowClarify(false)
+  }
+
   async function doStartRun(runGoal: string) {
     setIsStarting(true)
     setErrorMessage(null)
     setManifest(null)
     setSelectedArtifact(null)
     setPreview(null)
+    setIsPreviewLoading(false)
+    artifactRequestIdRef.current += 1
     try {
       const response = await fetch('/api/run', {
         method: 'POST',
@@ -106,7 +114,11 @@ function App() {
 
   async function loadArtifact(artifactName: string) {
     if (!runId) return
+    const requestId = artifactRequestIdRef.current + 1
+    artifactRequestIdRef.current = requestId
     setSelectedArtifact(artifactName)
+    setPreview(null)
+    setIsPreviewLoading(true)
     setErrorMessage(null)
     try {
       const response = await fetch(`/api/workspace/${runId}/${artifactName}`)
@@ -114,9 +126,15 @@ function App() {
         throw new Error(`Failed to load artifact ${artifactName}`)
       }
       const data = (await response.json()) as ArtifactPreview
+      if (artifactRequestIdRef.current !== requestId) return
       setPreview(data)
     } catch (error: unknown) {
+      if (artifactRequestIdRef.current !== requestId) return
       setErrorMessage(error instanceof Error ? error.message : `Failed to load artifact ${artifactName}`)
+    } finally {
+      if (artifactRequestIdRef.current === requestId) {
+        setIsPreviewLoading(false)
+      }
     }
   }
 
@@ -126,7 +144,12 @@ function App() {
         <GoalInput goal={goal} isRunning={isStarting || isRunning} onGoalChange={setGoal} onSubmit={handleRunClick} />
 
         {showClarify && !isStarting && !isRunning && (
-          <ClarifyDialog goal={goal} onConfirm={handleClarifyConfirm} onSkip={handleClarifySkip} />
+          <ClarifyDialog
+            goal={goal}
+            onConfirm={handleClarifyConfirm}
+            onSkip={handleClarifySkip}
+            onCancel={handleClarifyCancel}
+          />
         )}
 
         {errorMessage && (
@@ -151,6 +174,7 @@ function App() {
               manifest={manifest}
               selectedArtifact={selectedArtifact}
               preview={preview}
+              isLoading={isPreviewLoading}
               onSelect={(artifactName) => void loadArtifact(artifactName)}
             />
             <ReportPanel events={events as AgentEvent[]} runId={runId} />

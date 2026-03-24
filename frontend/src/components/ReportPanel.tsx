@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import type { AgentEvent } from '../types'
 
@@ -141,20 +141,62 @@ function isFallbackReport(r: LLMReport): boolean {
   )
 }
 
+function renderInlineMarkdown(text: string): ReactNode[] {
+  return text
+    .split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+    .filter(Boolean)
+    .map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={index}>{part.slice(2, -2)}</strong>
+      }
+      if (part.startsWith('`') && part.endsWith('`')) {
+        return (
+          <code key={index} className="rounded bg-slate-800 px-1 py-0.5 text-[11px] text-cyan-300">
+            {part.slice(1, -1)}
+          </code>
+        )
+      }
+      return part
+    })
+}
+
 function renderMarkdown(text: string) {
   const lines = text.split('\n')
-  return lines.map((line, i) => {
-    const boldReplaced = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    const codeReplaced = boldReplaced.replace(/`(.+?)`/g, '<code class="rounded bg-slate-800 px-1 py-0.5 text-[11px] text-cyan-300">$1</code>')
+  const blocks: ReactNode[] = []
+  let listItems: string[] = []
 
+  const flushList = () => {
+    if (listItems.length === 0) return
+    const items = listItems
+    listItems = []
+    blocks.push(
+      <ul key={`list-${blocks.length}`} className="ml-4 list-disc space-y-1">
+        {items.map((item, index) => (
+          <li key={index}>{renderInlineMarkdown(item)}</li>
+        ))}
+      </ul>,
+    )
+  }
+
+  lines.forEach((line) => {
     if (line.startsWith('- ') || line.startsWith('• ')) {
-      return (
-        <li key={i} className="ml-4 list-disc" dangerouslySetInnerHTML={{ __html: codeReplaced.slice(2) }} />
-      )
+      listItems.push(line.slice(2))
+      return
     }
-    if (line.trim() === '') return <br key={i} />
-    return <p key={i} dangerouslySetInnerHTML={{ __html: codeReplaced }} />
+
+    flushList()
+
+    if (line.trim() === '') {
+      blocks.push(<div key={`spacer-${blocks.length}`} className="h-2" />)
+      return
+    }
+
+    blocks.push(<p key={`p-${blocks.length}`}>{renderInlineMarkdown(line)}</p>)
   })
+
+  flushList()
+
+  return blocks
 }
 
 export function ReportPanel({ events, runId }: ReportPanelProps) {

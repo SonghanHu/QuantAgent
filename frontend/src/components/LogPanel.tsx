@@ -1,9 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { AgentEvent } from '../types'
 
 type LogPanelProps = {
   events: AgentEvent[]
+}
+
+function summarizeText(text: string, maxLength = 120) {
+  const compact = text.replace(/\s+/g, ' ').trim()
+  if (compact.length <= maxLength) return compact
+  return `${compact.slice(0, maxLength).trimEnd()}...`
 }
 
 function formatEvent(event: AgentEvent): { icon: string; label: string; detail: string; tone: string } {
@@ -12,7 +18,7 @@ function formatEvent(event: AgentEvent): { icon: string; label: string; detail: 
       return {
         icon: '🚀',
         label: 'Run started',
-        detail: String(event.goal ?? ''),
+        detail: summarizeText(String(event.goal ?? ''), 90),
         tone: 'border-cyan-400/20 bg-cyan-400/5',
       }
     case 'decompose_done':
@@ -127,18 +133,84 @@ function formatEvent(event: AgentEvent): { icon: string; label: string; detail: 
   }
 }
 
+function renderExpandedSummary(event: AgentEvent, detail: string): ReactNode {
+  if (event.type === 'run_start') {
+    return (
+      <div className="space-y-1.5">
+        <div className="text-[10px] font-medium uppercase tracking-widest text-slate-500">Goal</div>
+        <div className="text-xs leading-relaxed text-slate-300">{String(event.goal ?? '')}</div>
+      </div>
+    )
+  }
+
+  if (detail) {
+    return <div className="text-xs leading-relaxed text-slate-300">{detail}</div>
+  }
+
+  return <div className="text-xs text-slate-500">No additional summary.</div>
+}
+
 export function LogPanel({ events }: LogPanelProps) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
+  const [autoScroll, setAutoScroll] = useState(true)
+  const listRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!autoScroll || !listRef.current) return
+    listRef.current.scrollTop = listRef.current.scrollHeight
+  }, [autoScroll, events])
+
+  function handleScroll() {
+    if (!listRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = listRef.current
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 24
+    setAutoScroll(isNearBottom)
+  }
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/5 p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">Live log</h2>
-        <span className="text-xs text-slate-400">{events.length} events</span>
+    <section className="rounded-2xl border border-white/10 bg-white/5 p-3 sm:p-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-semibold tracking-wide text-white">Live log</h2>
+          <div className="tabular-nums text-[10px] text-slate-500">{events.length} events</div>
+        </div>
+        <div className="flex items-center gap-2">
+          {!autoScroll && events.length > 0 && (
+            <button
+              type="button"
+              className="rounded-full border border-cyan-400/20 px-2 py-1 text-[10px] text-cyan-300 transition hover:border-cyan-400/40 hover:bg-cyan-400/10"
+              onClick={() => {
+                setAutoScroll(true)
+                requestAnimationFrame(() => {
+                  if (listRef.current) {
+                    listRef.current.scrollTop = listRef.current.scrollHeight
+                  }
+                })
+              }}
+            >
+              Jump to latest
+            </button>
+          )}
+          <button
+            type="button"
+            className={`rounded-full border px-2 py-1 text-[10px] transition ${
+              autoScroll
+                ? 'border-cyan-400/20 bg-cyan-400/10 text-cyan-300'
+                : 'border-white/10 text-slate-400 hover:border-white/20'
+            }`}
+            onClick={() => setAutoScroll((current) => !current)}
+          >
+            Auto-scroll
+          </button>
+        </div>
       </div>
-      <div className="max-h-[40rem] space-y-1.5 overflow-auto pr-1">
+      <div
+        ref={listRef}
+        className="max-h-[min(36rem,70vh)] space-y-1 overflow-auto pr-0.5"
+        onScroll={handleScroll}
+      >
         {events.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
+          <div className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-xs text-slate-400">
             Start a run to see live events.
           </div>
         ) : (
@@ -146,30 +218,46 @@ export function LogPanel({ events }: LogPanelProps) {
             const { icon, label, detail, tone } = formatEvent(event)
             const isExpanded = expandedIndex === index
             return (
-              <article
-                key={`${event.ts}-${index}`}
-                className={`cursor-pointer rounded-xl border p-2.5 transition-colors hover:bg-white/[0.02] ${tone}`}
-                onClick={() => setExpandedIndex(isExpanded ? null : index)}
-              >
-                <div className="flex items-start gap-2">
-                  <span className="mt-px flex-shrink-0 text-sm leading-none">{icon}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-slate-200">{label}</span>
-                      <span className="flex-shrink-0 text-[10px] text-slate-600">
-                        {new Date(event.ts).toLocaleTimeString()}
-                      </span>
+              <article key={`${event.ts}-${index}`} className={`rounded-lg border ${tone}`}>
+                <button
+                  type="button"
+                  className="w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05]"
+                  aria-expanded={isExpanded}
+                  onClick={() => setExpandedIndex(isExpanded ? null : index)}
+                >
+                  <div className="flex items-start gap-1.5">
+                    <span className="mt-0.5 flex-shrink-0 text-[11px] leading-none opacity-90">{icon}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-[11px] font-medium leading-snug text-slate-200">{label}</span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="flex-shrink-0 text-[9px] tabular-nums text-slate-600">
+                            {new Date(event.ts).toLocaleTimeString()}
+                          </span>
+                          <span className="text-[10px] text-slate-500">{isExpanded ? '−' : '+'}</span>
+                        </span>
+                      </div>
+                      {detail && !isExpanded && (
+                        <div className="mt-0.5 truncate text-[10px] leading-snug text-slate-500">{detail}</div>
+                      )}
                     </div>
-                    {detail && !isExpanded && (
-                      <div className="mt-0.5 truncate text-xs text-slate-500">{detail}</div>
-                    )}
-                    {isExpanded && (
-                      <pre className="mt-2 max-h-60 overflow-auto rounded-lg bg-slate-950/60 p-2 text-[11px] leading-relaxed text-slate-400">
+                  </div>
+                </button>
+                {isExpanded && (
+                  <div className="mx-2 mb-2 space-y-2">
+                    <div className="rounded-md bg-slate-950/40 p-2">
+                      {renderExpandedSummary(event, detail)}
+                    </div>
+                    <details className="rounded-md bg-slate-950/30 p-2">
+                      <summary className="cursor-pointer text-[10px] text-slate-500 hover:text-slate-400">
+                        Raw event
+                      </summary>
+                      <pre className="mt-2 max-h-40 overflow-auto text-[10px] leading-relaxed text-slate-400">
                         {JSON.stringify(event, null, 2)}
                       </pre>
-                    )}
+                    </details>
                   </div>
-                </div>
+                )}
               </article>
             )
           })

@@ -7,6 +7,16 @@ type ProgressBarProps = {
 
 export function ProgressBar({ completed, total, currentStep, connectionStatus }: ProgressBarProps) {
   const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+  const connectionLabel =
+    connectionStatus === 'open'
+      ? 'Streaming'
+      : connectionStatus === 'connecting'
+        ? 'Connecting'
+        : connectionStatus === 'closed'
+          ? 'Disconnected'
+          : connectionStatus === 'error'
+            ? 'Connection error'
+            : 'Idle'
 
   return (
     <section className="rounded-3xl border border-white/10 bg-white/5 p-5">
@@ -16,7 +26,7 @@ export function ProgressBar({ completed, total, currentStep, connectionStatus }:
           <p className="text-sm text-slate-300">{currentStep || 'Waiting for run to start'}</p>
         </div>
         <div className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1 text-xs text-slate-300">
-          {connectionStatus}
+          {connectionLabel}
         </div>
       </div>
       <div className="h-3 overflow-hidden rounded-full bg-slate-900/90">

@@ -26,7 +26,14 @@ export function GoalInput({ goal, isRunning, onGoalChange, onSubmit }: GoalInput
         placeholder="Describe the research task..."
         value={goal}
         onChange={(event) => onGoalChange(event.target.value)}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !isRunning && goal.trim()) {
+            event.preventDefault()
+            onSubmit()
+          }
+        }}
       />
+      <div className="mt-2 text-xs text-slate-500">Press `Cmd/Ctrl + Enter` to run.</div>
     </section>
   )
 }
