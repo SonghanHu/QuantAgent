@@ -1,6 +1,8 @@
 import { useState } from 'react'
 
+import { EquityVizPreview } from './EquityVizPreview'
 import type { ArtifactPreview, WorkspaceManifest } from '../types'
+import { isEquityVizPayload } from '../types'
 
 type ArtifactPanelProps = {
   manifest: WorkspaceManifest | null
@@ -185,10 +187,28 @@ export function ArtifactPanel({
                 Select an artifact on the left, or enable <strong className="text-slate-400">Follow latest artifact</strong>{' '}
                 to open new files as they are written.
               </div>
+            ) : preview.kind === 'json' && isEquityVizPayload(preview.content) ? (
+              <EquityVizPreview payload={preview.content} />
             ) : preview.kind === 'json' ? (
               <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-100">
                 {JSON.stringify(preview.content, null, 2)}
               </pre>
+            ) : preview.kind === 'image' ? (
+              <div className="flex flex-col items-center gap-3">
+                <img
+                  src={preview.url}
+                  alt={preview.artifact_name}
+                  className="max-h-[min(480px,60vh)] w-full max-w-full rounded-lg border border-white/10 object-contain"
+                />
+                <a
+                  href={preview.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-cyan-400/90 hover:underline"
+                >
+                  在新标签页打开图片
+                </a>
+              </div>
             ) : preview.kind === 'text' ? (
               <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-emerald-100/90">
                 {preview.content}

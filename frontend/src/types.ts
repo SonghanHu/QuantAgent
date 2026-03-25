@@ -26,6 +26,27 @@ export type WorkspaceManifest = {
   agent_scripts?: AgentScriptSummary[]
 }
 
+export type EquityVizTrade = {
+  index: number
+  date: string
+  side: string
+  label: string
+}
+
+export type EquityVizPayload = {
+  version?: number
+  dates: string[]
+  equity: number[]
+  trades: EquityVizTrade[]
+}
+
+export function isEquityVizPayload(x: unknown): x is EquityVizPayload {
+  if (!x || typeof x !== 'object') return false
+  const o = x as Record<string, unknown>
+  if (!Array.isArray(o.dates) || !Array.isArray(o.equity) || !Array.isArray(o.trades)) return false
+  return o.dates.length === o.equity.length && o.dates.length > 1
+}
+
 export type ArtifactPreview =
   | {
       artifact_name: string
@@ -44,4 +65,9 @@ export type ArtifactPreview =
       kind: 'text'
       language?: string
       content: string
+    }
+  | {
+      artifact_name: string
+      kind: 'image'
+      url: string
     }
