@@ -85,7 +85,7 @@ def execute_feature_skill(
 from pathlib import Path
 import json
 DATA_PATH = {repr(data_path)}
-OUTPUT_PATH = {repr(str(output_path))}
+OUTPUT_PATH = Path({repr(str(output_path))})
 OUTPUT_JSON = Path({repr(str(output_json))})
 RUN_DIR = Path({repr(str(run_dir))})
 FEATURE_PLAN_JSON = {repr(plan_json_str)}
