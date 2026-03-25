@@ -9,7 +9,7 @@ import os
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
 _CHAT_SYSTEM = """You are a senior quant research assistant. The user completed an automated research pipeline run. \
 Below is CONTEXT extracted from that run's workspace (reports, JSON artifacts, and excerpts). \
@@ -121,11 +121,26 @@ def chat_with_run_context(
     if len(api_messages) < 2:
         raise ValueError("Need at least one user message with non-empty content.")
 
-    completion = cli.chat.completions.create(
-        model=m,
-        messages=api_messages,
-        temperature=0.35,
-        max_tokens=2_048,
-    )
+    # Newer OpenAI chat models reject ``max_tokens`` and require ``max_completion_tokens``.
+    try:
+        completion = cli.chat.completions.create(
+            model=m,
+            messages=api_messages,
+            temperature=0.35,
+            max_completion_tokens=2_048,
+        )
+    except BadRequestError as exc:
+        err = str(exc).lower()
+        if "max_completion_tokens" in err and (
+            "unsupported" in err or "unknown" in err or "not supported" in err
+        ):
+            completion = cli.chat.completions.create(
+                model=m,
+                messages=api_messages,
+                temperature=0.35,
+                max_tokens=2_048,
+            )
+        else:
+            raise
     choice = completion.choices[0].message.content
     return (choice or "").strip()
