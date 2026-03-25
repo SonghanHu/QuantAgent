@@ -106,7 +106,13 @@ def _price_column_stats(df: Any) -> dict[str, Any]:
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return {}
     n = len(df)
-    cols = [c for c in df.columns if str(c).startswith(("Adj Close_", "Close_"))]
+    cols: list[Any] = []
+    for c in df.columns:
+        cs = str(c)
+        if cs.startswith(("Adj Close_", "Close_")):
+            cols.append(c)
+        elif cs in ("Close", "Adj Close"):
+            cols.append(c)
     out: dict[str, Any] = {}
     for c in cols[:40]:
         s = df[c]

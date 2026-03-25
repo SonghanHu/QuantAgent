@@ -53,6 +53,35 @@ def _first_requested_per_yahoo(
     return yahoo_to_requested, warnings
 
 
+def _suffix_bare_ohlcv_for_single_ticker(
+    df: pd.DataFrame, requested_list: list[str]
+) -> pd.DataFrame:
+    """
+    yfinance single-ticker downloads flatten to bare ``Open``/``Close``/``Adj Close`` …
+    (no ``_TICKER`` suffix). Downstream judges and helpers expect panel-style
+    ``Close_<SYM>`` / ``Adj Close_<SYM>`` like multi-ticker frames.
+    """
+    if len(requested_list) != 1:
+        return df
+    suf = requested_list[0].strip()
+    if not suf:
+        return df
+    if any(str(c).startswith(("Close_", "Adj Close_")) for c in df.columns):
+        return df
+    bare_map = {
+        "Open": f"Open_{suf}",
+        "High": f"High_{suf}",
+        "Low": f"Low_{suf}",
+        "Close": f"Close_{suf}",
+        "Adj Close": f"Adj Close_{suf}",
+        "Volume": f"Volume_{suf}",
+    }
+    rename = {c: bare_map[str(c)] for c in df.columns if str(c) in bare_map}
+    if not rename:
+        return df
+    return df.rename(columns=rename)
+
+
 def _rename_column_suffixes_to_requested(
     df: pd.DataFrame, yahoo_to_requested: dict[str, str]
 ) -> pd.DataFrame:
@@ -219,6 +248,7 @@ def load_data(
     if df is not None:
         df = _flatten_columns(df)
         df = _rename_column_suffixes_to_requested(df, yahoo_to_req)
+        df = _suffix_bare_ohlcv_for_single_ticker(df, requested_list)
         df = _ensure_adj_close_columns(df)
         df = _backfill_adj_from_close(df)
         meta["columns"] = list(df.columns)
