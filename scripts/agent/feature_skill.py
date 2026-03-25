@@ -54,6 +54,7 @@ def execute_feature_skill(
     feature_plan: dict[str, Any],
     *,
     data_path: str,
+    data_columns: list[str] | None = None,
     model: str | None = None,
     client: OpenAI | None = None,
     timeout_sec: int = 120,
@@ -106,7 +107,9 @@ TARGET_COLUMN = {repr(target_column)}
         "will be prepended for you. "
         "Return one complete script with consistent 4-space indentation and no stray indented top-level lines. "
         "If you use np.select or np.where: every choice and default must share one numeric dtype—never mix "
-        "string ticker labels with default=np.nan."
+        "string ticker labels with default=np.nan. "
+        "Wide panel price columns like `Adj Close_GLD` / `Close_SPY` are valid price inputs; do not assume "
+        "bare `Adj Close` or `Close` must exist."
     )
     user = (
         f"## Skill\n\n{skill}\n\n"
@@ -114,6 +117,12 @@ TARGET_COLUMN = {repr(target_column)}
         f"## Target column\n\n{feature_plan.get('target_column', 'target')}\n\n"
         f"## Data file\n\n{data_path}\n"
     )
+    if data_columns:
+        user += (
+            "\n\n## Detected data columns\n\n"
+            + json.dumps(data_columns[:200], ensure_ascii=False, default=str)
+            + "\n"
+        )
     rev_block = (revision_context or "").strip() or prior_script_revision_from_disk(script_path)
     if rev_block:
         user += (
@@ -178,14 +187,25 @@ TARGET_COLUMN = {repr(target_column)}
             break
         if runtime_round < max_runtime_fixes - 1:
             tail_err = _tail(proc.stderr, 6_000)
+            summary_hint = ""
+            if output_json.is_file():
+                try:
+                    failed_summary = json.loads(output_json.read_text(encoding="utf-8"))
+                    if isinstance(failed_summary, dict):
+                        summary_hint = json.dumps(failed_summary, ensure_ascii=False, default=str)[:2_500]
+                except json.JSONDecodeError:
+                    summary_hint = output_json.read_text(encoding="utf-8")[:2_500]
             messages.append(
                 {
                     "role": "user",
                     "content": (
                         "The script failed when executed. Return a full corrected script only.\n\n"
-                        f"```\n{tail_err}\n```\n\n"
-                        "If you use np.select: choicelist values must match the default dtype "
-                        "(e.g. all floats); do not mix ticker strings with default=np.nan."
+                        + (f"### stderr\n```\n{tail_err}\n```\n\n" if tail_err.strip() else "")
+                        + (f"### summary.json\n```json\n{summary_hint}\n```\n\n" if summary_hint else "")
+                        + "If you use np.select: choicelist values must match the default dtype "
+                        + "(e.g. all floats); do not mix ticker strings with default=np.nan. "
+                        + "If the failure says bare `Adj Close` / `Close` are missing, inspect suffixed panel columns "
+                        + "like `Adj Close_GLD` and derive a compatibility target from those instead."
                     ),
                 },
             )

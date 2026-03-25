@@ -52,6 +52,8 @@ def build_features(
     from agent.feature_skill import execute_feature_skill
 
     plan = workspace.load_json("feature_plan")
+    raw_df = workspace.load_df("raw_data")
+    data_columns = list(raw_df.columns)
 
     target_column = _sanitize_target_column(plan.get("target_column"))
     plan["target_column"] = target_column
@@ -72,6 +74,7 @@ def build_features(
     result = execute_feature_skill(
         plan,
         data_path=data_path,
+        data_columns=data_columns,
         timeout_sec=timeout_sec,
         session_run_id=workspace.run_id,
     )

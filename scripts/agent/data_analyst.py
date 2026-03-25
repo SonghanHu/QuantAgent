@@ -157,6 +157,8 @@ def run_data_analyst(
     max_rounds: int = 4,
     timeout_sec: int = 120,
     event_callback: Callable[[dict[str, Any]], None] | None = None,
+    session_run_id: str | None = None,
+    workspace: Any | None = None,
 ) -> DataAnalystResult:
     """
     Iterative sub-agent: analyze data until the model is confident enough to propose features.
@@ -176,7 +178,7 @@ def run_data_analyst(
         "and correlations with likely target columns. "
         "Flag any data quality issues."
     )
-    analysis_session_id = uuid.uuid4().hex[:12]
+    analysis_session_id = (session_run_id or "").strip()[:12] or uuid.uuid4().hex[:12]
 
     for round_num in range(1, max_rounds + 1):
         print(f"  [data_analyst] round {round_num}: {instruction[:80]}...")
@@ -201,6 +203,7 @@ def run_data_analyst(
             timeout_sec=timeout_sec,
             session_run_id=analysis_session_id,
             revision_context=revision_context,
+            workspace=workspace,
         )
         ar = AnalysisRound(round_num=round_num, instruction=instruction, result=analysis)
 

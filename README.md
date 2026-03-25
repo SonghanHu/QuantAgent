@@ -309,7 +309,7 @@ uv run python scripts/llm/task_decompose.py "Your research goal"
 `run_data_loader` is the default pipeline entry for market data; `load_data` is the low-level direct fetch.  
 `run_data_analysis` is a single-shot EDA alternative to `run_data_analyst`.
 
-**Registry** — `scripts/tools/__init__.py` → `TOOL_REGISTRY` (11 tools).  
+**Registry** — `scripts/tools/__init__.py` → `TOOL_REGISTRY` (12 tools).  
 **Routing** — `tool_routing.py` reads `docs/tools.md` for LLM routing; `subtask_heuristic.py` as fallback.  
 **Injection** — `workspace` and `event_callback` auto-injected when present in a tool's signature.
 
@@ -346,7 +346,7 @@ I have a few questions before starting:
 
   1. Which assets should the strategy trade? (Default: S&P 500, daily)
   2. Are we predicting next-day returns or building a ranking? (Default: next-day return)
-  3. Long-only or long-short? Transaction costs? (Default: long-short, 10bps)
+  3. Long-only or long-short? Transaction costs? (Example default in clarify flow may vary; `run_backtest` defaults to `transaction_cost_bps=0` unless you ask for costs.)
   4. What metrics matter most? (Default: Sharpe, max drawdown)
 
 Your answers: Use defaults, but make it long-only with SPY

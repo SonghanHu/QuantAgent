@@ -36,6 +36,8 @@ def run_data_analyst(
         max_rounds=max_rounds,
         timeout_sec=timeout_sec,
         event_callback=event_callback,
+        session_run_id=workspace.run_id if workspace is not None else None,
+        workspace=workspace,
     )
 
     round_summaries = []

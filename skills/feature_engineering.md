@@ -13,12 +13,17 @@ A **single Python script** that:
 
 1. Loads the dataset from `DATA_PATH` (pandas).
 2. For each feature in the plan, computes the column using the `logic` field (pandas / numpy operations).
-3. **Creates the target column** (critical for downstream training and backtesting):
+3. **Creates the target column** (critical for downstream training and pipeline compatibility):
    - The required column name is given by the injected variable `TARGET_COLUMN`.
    - If `TARGET_COLUMN` already exists in the data, keep it as-is.
-   - Otherwise derive it: **next-bar simple return** from `Adj Close` (preferred) or `Close`:
-     `df[TARGET_COLUMN] = df[price_col].pct_change().shift(-1)`
-   - If neither price column exists, write an error summary to `OUTPUT_JSON` and `sys.exit(1)`.
+   - Otherwise derive it from the **best available price columns**:
+     - First prefer bare single-asset columns: `Adj Close`, then `Close`.
+     - If the frame is a multi-asset wide panel, also support suffixed columns such as `Adj Close_GLD`, `Adj Close_USO`, `Close_SPY`, etc.
+   - Infer the forward-return horizon from `TARGET_COLUMN` when obvious:
+     - contains `next_week`, `week`, or `5d` → use about 5 trading days
+     - otherwise default to next-bar / 1-day
+   - For a multi-asset panel with several price columns and no pre-existing `TARGET_COLUMN`, it is acceptable to create a **pipeline-compatibility target** as the equal-weight forward return across the detected assets, and explain that choice in the summary `notes`.
+   - If no trustworthy price columns exist at all, write an error summary to `OUTPUT_JSON` and `sys.exit(1)`.
    - The final parquet **must** contain a column named exactly `TARGET_COLUMN`.
 4. Handles edge cases: NaN from rolling windows, division by zero, look-ahead bias (only use past data for each row).
 5. Drops rows where `TARGET_COLUMN` is NaN (tail row from shift, warm-up NaN rows).
@@ -49,6 +54,9 @@ A **single Python script** that:
   - Never do `df["x"] = other_df["y"]` unless `other_df.index.equals(df.index)`.
 - **No look-ahead:** rolling / lag features must only use data available at the current timestamp.
   The only allowed forward operation is `shift(-1)` for the target (label).
+- **Panel price data:** many runs use wide multi-asset OHLCV frames with columns like `Adj Close_GLD`,
+  `Close_USO`, `Volume_UUP`. Treat these as valid price inputs. Do **not** fail just because bare
+  `Adj Close` / `Close` columns are absent.
 - **pandas frequency aliases:** if you need monthly resampling or month-end grouping, use `ME` rather than `M` (pandas 3+ no longer supports `M`).
 - **NumPy `np.select` / mixed dtypes:** `np.select(conditions, choices, default=...)` requires every
   array in `choices` and the `default` value to share a **common dtype**. Do **not** mix **strings**

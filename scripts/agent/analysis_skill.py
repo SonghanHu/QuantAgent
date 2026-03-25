@@ -137,6 +137,7 @@ def execute_analysis_skill(
     timeout_sec: int = 120,
     session_run_id: str | None = None,
     revision_context: str | None = None,
+    workspace: Any | None = None,
 ) -> dict[str, Any]:
     """
     Load skill markdown, ask the model for a script, write under ``data/analysis_runs/<id>/``, run with current interpreter.
@@ -196,6 +197,16 @@ RUN_DIR = Path({repr(str(run_dir))})
 
     full_source = preamble + "\n\n" + body + "\n"
     script_path.write_text(full_source, encoding="utf-8")
+    if workspace is not None:
+        try:
+            workspace.save_text(
+                "analysis_generated",
+                full_source,
+                ext="py",
+                description="Generated EDA script (mirror of data/analysis_runs/<run_id>/analysis.py)",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     proc = subprocess.run(
         [sys.executable, str(script_path)],

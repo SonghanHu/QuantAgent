@@ -4,11 +4,12 @@ Use this file as **context for the LLM**: after *Thought*, choose an *Action* th
 
 The small-model router (`agent.tool_routing.resolve_subtask_tool`) reads this catalog (truncated), returns structured `tool_name` plus a **JSON string** of kwargs (OpenAI schema-safe); invalid names are retried, then keyword fallback.
 
-**Registry:** `scripts/tools/__init__.py` defines `TOOL_REGISTRY` with **11** tools. Some tools also accept an optional `event_callback` (for streaming `data_loader_round` / `data_analyst_round` events to the dashboard).
+**Registry:** `scripts/tools/__init__.py` defines `TOOL_REGISTRY` with **12** tools. Some tools also accept an optional `event_callback` (for streaming `data_loader_round` / `data_analyst_round` events to the dashboard).
 
 **Workspace:** Every run has a shared `Workspace` directory (`data/workspaces/<run_id>/`). Tools that accept a `workspace` parameter automatically receive it. Data flows between tools through workspace artifacts:
 
 - `web_search` → saves `search_context.json`
+- `fetch_sp500_tickers` → optional save `sp500_tickers.json` (current constituents list)
 - `run_data_loader` → iterative judge loop → saves `raw_data.parquet` when the judge accepts the panel (normalizes single-ticker Yahoo frames to panel-style `Close_<SYM>` / `Adj Close_<SYM>` before the judge runs)
 - `load_data` → one-shot download → saves `raw_data.parquet` (low-level; pipeline prefers `run_data_loader`)
 - `run_data_analysis` / `run_data_analyst` / `train_model` → auto-resolve `data_path` from `raw_data` when not explicitly set
@@ -31,7 +32,17 @@ You do **not** need to pass `data_path` explicitly when the upstream `run_data_l
 
 Skip steps only if the subtask clearly does not need them. Use `build_alphas` instead of `build_features` when the goal involves alpha research, formulaic alphas, or WorldQuant-style factors.
 
-**Tool names (registry):** `build_alphas`, `build_features`, `evaluate_strategy`, `load_data`, `run_backtest`, `run_data_analysis`, `run_data_analyst`, `run_data_loader`, `run_debug_agent`, `train_model`, `web_search`.
+**Tool names (registry):** `build_alphas`, `build_features`, `evaluate_strategy`, `fetch_sp500_tickers`, `load_data`, `run_backtest`, `run_data_analysis`, `run_data_analyst`, `run_data_loader`, `run_debug_agent`, `train_model`, `web_search`.
+
+---
+
+## `fetch_sp500_tickers`
+
+- **What it does:** Downloads the public [S&P 500 constituents CSV](https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv), parses the `Symbol` column, normalizes dots to hyphens for Yahoo-style tickers (e.g. `BRK.B` → `BRK-B`), and returns a sorted deduplicated list.
+- **When to use:** When a subtask needs the **current** S&P 500 universe for screening, batch downloads, or universe definition — not for point-in-accurate historical index membership (see notes).
+- **Arguments:** `timeout` (seconds, default `60`), `workspace` (auto-injected).
+- **Returns:** `tickers`, `n`, `source_url`, `notes` (survivorship / current-membership caveat). With workspace: saves `sp500_tickers` artifact.
+- **ReAct example:** *Thought: Need the latest S&P 500 symbol list before batch price load.* → *Action: fetch_sp500_tickers* with `{}`.
 
 ---
 
@@ -164,7 +175,7 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
   - `strategy_type`: `"long_only"` (default) | `"long_short"` — whether the strategy can short
   - `rebalance_freq`: `"daily"` | `"weekly"` | `"monthly"` — rebalance cadence. **Omit** to let the tool infer `weekly` / `monthly` from `feature_plan` text (e.g. W-FRI, 周频); if nothing matches, defaults to `"daily"`. When the user’s goal states a cadence, **pass it explicitly** here (do not rely on inference alone).
   - `position_sizing`: `"equal_weight"` | `"signal_proportional"` (default) | `"volatility_scaled"`
-  - `transaction_cost_bps`: float, default `5.0` — round-trip cost in basis points
+  - `transaction_cost_bps`: float, default `0.0` — round-trip cost in basis points (use `> 0` only when the user explicitly asked for transaction costs)
   - `max_position_pct`: float 0–1, default `1.0` — max portfolio fraction per position
   - `initial_capital`: float, default `1000000`
   - `train_ratio`: optional float 0.1–1.0 — time-ordered train fraction; default **`1.0` for `rule_based`** (full-sample metrics) and **`0.7` for `model_based`** unless you pass an explicit value

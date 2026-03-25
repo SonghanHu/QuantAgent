@@ -31,4 +31,6 @@ def run_data_analysis(
         data_path=data_path,
         skill_name=skill_name,
         timeout_sec=timeout_sec,
+        session_run_id=workspace.run_id if workspace is not None else None,
+        workspace=workspace,
     )
