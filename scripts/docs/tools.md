@@ -4,20 +4,23 @@ Use this file as **context for the LLM**: after *Thought*, choose an *Action* th
 
 The small-model router (`agent.tool_routing.resolve_subtask_tool`) reads this catalog (truncated), returns structured `tool_name` plus a **JSON string** of kwargs (OpenAI schema-safe); invalid names are retried, then keyword fallback.
 
+**Registry:** `scripts/tools/__init__.py` defines `TOOL_REGISTRY` with **11** tools. Some tools also accept an optional `event_callback` (for streaming `data_loader_round` / `data_analyst_round` events to the dashboard).
+
 **Workspace:** Every run has a shared `Workspace` directory (`data/workspaces/<run_id>/`). Tools that accept a `workspace` parameter automatically receive it. Data flows between tools through workspace artifacts:
 
 - `web_search` → saves `search_context.json`
-- `run_data_loader` → iterative judge loop → saves `raw_data.parquet` when the judge accepts the panel
+- `run_data_loader` → iterative judge loop → saves `raw_data.parquet` when the judge accepts the panel (normalizes single-ticker Yahoo frames to panel-style `Close_<SYM>` / `Adj Close_<SYM>` before the judge runs)
 - `load_data` → one-shot download → saves `raw_data.parquet` (low-level; pipeline prefers `run_data_loader`)
 - `run_data_analysis` / `run_data_analyst` / `train_model` → auto-resolve `data_path` from `raw_data` when not explicitly set
 - `run_data_analyst` → saves `feature_plan.json`
 - `build_features` → reads `raw_data` + `feature_plan`, saves `engineered_data.parquet`
 - `build_alphas` → reads `raw_data` + `feature_plan`/`alpha_plan` + `search_context`, saves `engineered_data.parquet`
 - `train_model` → reads from `engineered_data` (or `raw_data`), saves `model_output.json`
-- `run_backtest` → reads `engineered_data` (or `raw_data`) + `model_output`, saves `backtest_results.json`
-- `evaluate_strategy` → reads `backtest_results` + `model_output` + `feature_plan`, saves `evaluation.json`
+- `run_backtest` → reads `engineered_data` (or `raw_data`); if `model_output` exists → **`model_based`** backtest, else → **`rule_based`** (signals/features only). Saves `backtest_results.json`
+- `evaluate_strategy` → reads `backtest_results` and optionally `model_output` + `feature_plan`; saves `evaluation.json` (works for ML or rule-only runs)
+- `run_debug_agent` → reads workspace + error context, saves `debug_notes.json`
 
-You do **not** need to pass `data_path` explicitly when the upstream `load_data` has already run — the workspace handles artifact flow.
+You do **not** need to pass `data_path` explicitly when the upstream `run_data_loader` / `load_data` has already run — the workspace handles artifact flow.
 
 **Typical pipelines:**
 
@@ -27,6 +30,8 @@ You do **not** need to pass `data_path` explicitly when the upstream `load_data`
 4. For single-shot analysis: `run_data_loader` or `load_data` → `run_data_analysis` → …
 
 Skip steps only if the subtask clearly does not need them. Use `build_alphas` instead of `build_features` when the goal involves alpha research, formulaic alphas, or WorldQuant-style factors.
+
+**Tool names (registry):** `build_alphas`, `build_features`, `evaluate_strategy`, `load_data`, `run_backtest`, `run_data_analysis`, `run_data_analyst`, `run_data_loader`, `run_debug_agent`, `train_model`, `web_search`.
 
 ---
 
@@ -46,8 +51,9 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
 ## `run_data_loader`
 
 - **What it does:** Sub-agent: each round the model emits a **`YFinanceFetchSpec`**, the tool runs **`load_data`** (fixed path), then a **judge** decides if `raw_data` fits the **research goal** (coverage, missing prices, horizon). Repeats until accepted or max rounds. Stale `raw_data` is dropped if the judge rejects the final attempt.
+- **Implementation note:** `load_data` flattens Yahoo multi-index columns and, for single-ticker downloads, suffixes bare OHLCV names (`Close` → `Close_<TICKER>`) so downstream judges and features see stable price column names.
 - **When to use:** Default for any subtask whose job is to **obtain** market/OHLCV data for the run. Prefer over bare `load_data` in the main pipeline.
-- **Arguments:** `goal` (required; overall objective), `max_rounds` (default `4`), `workspace` (auto-injected).
+- **Arguments:** `goal` (required; overall objective), `max_rounds` (default `4`), `workspace` (auto-injected), optional `event_callback` for streaming.
 - **Returns:** `stopped_reason`, `round_summaries`, `returncode` (`0` when judge accepted and `raw_data` exists), `last_spec`, `judge_reasoning` on failure.
 - **ReAct example:** *Thought: Need a multi-asset panel for the user’s strategy.* → *Action: run_data_loader* with `{ "goal": "<subtask + parent goal>" }`.
 
@@ -163,21 +169,34 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
   - `initial_capital`: float, default `1000000`
   - `train_ratio`: float 0.1–1.0, default `0.7` — in-sample fraction (used mainly in `model_based` mode)
   - `timeout_sec`: script execution timeout (default `180`)
-  - `workspace`: auto-injected; must contain data, and optionally `model_output`
-- **Returns:** `sharpe`, `max_drawdown`, `total_return`, `annual_return`, `win_rate`, `n_test_days`, plus script execution details. Saves `backtest_results` JSON to workspace.
+  - `workspace`: auto-injected; must contain `engineered_data` or `raw_data`; `model_output` optional (selects mode)
+- **Returns:** `sharpe`, `max_drawdown`, `total_return`, `annual_return`, `win_rate`, `n_test_days`, `backtest_mode`, plus script execution details. Saves `backtest_results` JSON to workspace.
 - **ReAct example:** *Thought: Need long-short daily backtest with 10bps costs.* → *Action: run_backtest* with `{ "strategy_type": "long_short", "transaction_cost_bps": 10, "train_ratio": 0.7 }`.
 
 ---
 
 ## `evaluate_strategy`
 
-- **What it does:** **LLM-driven evaluation.** Reads `backtest_results`, `model_output`, and optionally `feature_plan` from workspace. A senior quant reviewer LLM produces a structured `StrategyVerdict` with overall rating, strengths, weaknesses, risk assessment, and concrete next steps. Saves `evaluation` to workspace.
+- **What it does:** **LLM-driven evaluation.** Reads `backtest_results`, optional `model_output`, and optionally `feature_plan` from workspace. A senior quant reviewer LLM produces a structured `StrategyVerdict` with overall rating, strengths, weaknesses, risk assessment, and concrete next steps. If no `model_output` is present, the reviewer treats the run as a **rule-based** strategy review (not incomplete). Saves `evaluation` to workspace.
 - **When to use:** After `run_backtest`. Subtask mentions evaluation, summary, conclusion, verdict, next steps, robustness.
 - **Arguments:**
   - `workspace`: auto-injected; should contain `backtest_results` and/or `model_output`
   - `model`: optional LLM model override
 - **Returns:** `verdict` (`strong` | `promising` | `weak` | `failed`), `summary`, `strengths`, `weaknesses`, `risk_assessment`, `next_steps`, `deploy_ready`. Saves `evaluation` JSON to workspace.
 - **ReAct example:** *Thought: Backtest done, need to interpret results.* → *Action: evaluate_strategy* with `{}`.
+
+---
+
+## `run_debug_agent`
+
+- **What it does:** Invokes the debug LLM on the current workspace plus optional goal/query text. Produces structured diagnosis and suggested recovery steps; saves **`debug_notes`** to workspace.
+- **When to use:** When a subtask explicitly asks for debugging, or when the orchestrator needs a post-failure diagnosis (optional; controlled by env / workflow).
+- **Arguments:**
+  - `workspace`: auto-injected
+  - `goal`, `query`: natural-language context (executor may fill from the subtask)
+  - `model`: optional override (defaults to `OPENAI_TASK_MODEL` or `OPENAI_SMALL_MODEL`)
+- **Returns:** Diagnosis dict plus `workspace_artifact: debug_notes` when successful.
+- **ReAct example:** *Thought: Need to understand why build_features failed.* → *Action: run_debug_agent* with `{ "goal": "…", "query": "traceback from feature_eng" }`.
 
 ---
 

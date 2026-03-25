@@ -1,10 +1,24 @@
 # QuantAgent
 
-Natural-language **research agent** for quant workflows: decompose a goal into subtasks, route tools, load data, engineer features or WorldQuant-style alphas, train models, backtest strategies, evaluate performance, and emit an LLM-written final report (JSON + Markdown). Progress streams to a **real-time dashboard** via WebSocket.
+Natural-language **research agent** for quant workflows: decompose a goal into subtasks, route tools, load data, engineer features or WorldQuant-style alphas, optionally train models, backtest rule-based or predictive strategies, evaluate performance, and emit an LLM-written final report (JSON + Markdown). Progress streams to a **real-time dashboard** via WebSocket.
 
 ---
 
 ## Architecture overview
+
+QuantAgent has four layers:
+
+1. A React dashboard submits a goal, streams progress, and previews workspace artifacts in real time.
+2. A FastAPI server starts runs, persists run metadata, and relays events over WebSocket.
+3. The workflow orchestrator decomposes the goal into tool-shaped subtasks, executes them in dependency order, and records artifacts plus status.
+4. The tool layer mixes fixed implementations (`yfinance`, sklearn, SQLite/workspace IO) with skill-driven code generation for analysis, feature engineering, alpha construction, and backtesting.
+
+Two pipeline styles are first-class:
+
+- **Predictive / ML**: `web_search` → `run_data_loader` → `run_data_analyst` → `build_features` or `build_alphas` → `train_model` → `run_backtest` → `evaluate_strategy`
+- **Rule-based**: `web_search` → `run_data_loader` → `run_data_analyst` → `build_features` → `run_backtest` → `evaluate_strategy`
+
+The orchestrator also has a lightweight recovery loop: when a tool fails, it can write `debug_notes`, emit a suggested recovery step, retry the blocked subtask once, and publish `step_think` hints for the next stage.
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
@@ -35,6 +49,8 @@ Natural-language **research agent** for quant workflows: decompose a goal into s
 │  for subtask in plan:                                            │
 │      resolve_subtask_tool (LLM / heuristic)                      │
 │      run_tool(tool_name, **kwargs)                               │
+│      on failure: debug → recovery step → one retry               │
+│      emit step_think hints after each step                       │
 │      emit events ──▶ EventBus ──▶ WebSocket ──▶ Browser          │
 │  generate_report (LLM) ──▶ final_report.json + report.md        │
 │  save final state ──▶ SQLite + Workspace                         │
@@ -43,13 +59,16 @@ Natural-language **research agent** for quant workflows: decompose a goal into s
 ┌──────────────────────────▼────────────────────────────────────────┐
 │  Tool layer  (scripts/tools/)                                     │
 │                                                                   │
-│  web_search     ──▶ Brave API ──▶ search_context.json            │
-│  load_data      ──▶ yfinance ──▶ raw_data.parquet                │
+│  web_search       ──▶ Brave API ──▶ search_context.json          │
+│  run_data_loader  ──▶ propose spec → load → judge → raw_data     │
+│  load_data        ──▶ one-shot yfinance fetch → raw_data         │
 │  run_data_analyst ──▶ sub-agent loop (skill → judge → plan)      │
-│  build_features ──▶ feature_skill code-gen ──▶ engineered.parquet│
-│  build_alphas   ──▶ alpha_skill (WorldQuant-style) ──▶ same     │
-│  train_model    ──▶ sklearn ──▶ model_output.json                │
-│  run_backtest   ──▶ backtest skill ──▶ backtest_results.json     │
+│  build_features   ──▶ feature_skill code-gen ──▶ engineered_data │
+│  build_alphas     ──▶ alpha_skill (WorldQuant-style) ──▶ same    │
+│  train_model      ──▶ sklearn regression ──▶ model_output.json   │
+│  run_backtest     ──▶ backtest skill ──▶ backtest_results.json   │
+│                      (model_based or rule_based)                 │
+│  run_debug_agent  ──▶ structured diagnosis ──▶ debug_notes.json  │
 │  evaluate_strategy ──▶ LLM verdict ──▶ evaluation.json           │
 └──────────────────────────┬────────────────────────────────────────┘
                            │
@@ -61,6 +80,7 @@ Natural-language **research agent** for quant workflows: decompose a goal into s
 │    ├── raw_data.parquet, feature_plan.json, engineered_data.pqt  │
 │    ├── model_output.json, backtest_results.json, evaluation.json │
 │    ├── search_context.json                                        │
+│    ├── debug_notes.json                                           │
 │    ├── final_report.json                                          │
 │    └── report.md  ◀── human-readable final report                │
 │  SQLite: data/agent.db  (runs + log_entries)                     │
@@ -121,11 +141,14 @@ Natural-language **research agent** for quant workflows: decompose a goal into s
 │   │   ├── tool_routing.py     # LLM SubtaskToolChoice + keyword fallback
 │   │   ├── subtask_heuristic.py# Keyword routing fallback
 │   │   ├── clarifier.py        # Pre-execution goal clarification dialog
+│   │   ├── data_loader.py      # Iterative Yahoo spec propose/load/judge loop
 │   │   ├── analysis_skill.py   # LLM-generated EDA scripts + retry
 │   │   ├── feature_skill.py    # LLM-generated feature scripts + retry
 │   │   ├── alpha_skill.py      # LLM-generated WorldQuant alpha scripts + retry
 │   │   ├── backtest_skill.py   # LLM-generated backtest scripts + retry
 │   │   ├── data_analyst.py     # Sub-agent: analyze → judge → feature plan
+│   │   ├── debug_agent.py      # Failure diagnosis + structured recovery hints
+│   │   ├── step_thinking.py    # Post-step reflection for next-tool guidance
 │   │   ├── report_gen.py       # LLM final report → JSON + Markdown
 │   │   └── plan_revision.py    # revise_plan (placeholder)
 │   ├── llm/
@@ -145,7 +168,7 @@ Natural-language **research agent** for quant workflows: decompose a goal into s
 │   ├── storage/
 │   │   └── agent_log_db.py     # SQLite: runs + log_entries
 │   └── docs/
-│       ├── tools.md            # Tool catalog for LLM routing (9 tools)
+│       ├── tools.md            # Tool catalog for LLM routing
 │       └── yfinance_guide.md   # yfinance parameter guide for LLMs
 │
 ├── skills/                     # Markdown specs for code-generating skills
@@ -240,26 +263,32 @@ uv run python scripts/llm/task_decompose.py "Your research goal"
 | # | Tool | Role | Reads | Writes |
 |---|------|------|-------|--------|
 | 1 | `web_search` | Search web for research context (Brave API) | — | `search_context` |
-| 2 | `load_data` | Download market data (yfinance) or demo stub | — | `raw_data` |
+| 2 | `run_data_loader` | Iterative data-ingestion sub-agent: propose Yahoo spec, fetch, judge, retry | goal | `raw_data` |
+| 2b | `load_data` | One-shot yfinance download or demo stub | explicit kwargs | `raw_data` |
 | 3 | `run_data_analyst` | Iterative EDA sub-agent → feature plan | `raw_data` | `feature_plan` |
+| 3b | `run_data_analysis` | Single-shot EDA alternative | `raw_data` or path | analysis summary |
 | 4a | `build_features` | Feature engineering from plan | `raw_data` + `feature_plan` | `engineered_data` |
 | 4b | `build_alphas` | WorldQuant-style alpha construction | `raw_data` + `feature_plan` + `search_context` | `engineered_data` |
 | 5 | `train_model` | sklearn regression / tuning | `engineered_data` (or `raw_data`) | `model_output` |
-| 6 | `run_backtest` | Skill-driven strategy backtest | `engineered_data` + `model_output` | `backtest_results` |
-| 7 | `evaluate_strategy` | LLM strategy verdict | `backtest_results` + `model_output` | `evaluation` |
+| 6 | `run_backtest` | Skill-driven backtest in `model_based` or `rule_based` mode | `engineered_data`/`raw_data` + optional `model_output` | `backtest_results` |
+| 7 | `evaluate_strategy` | LLM strategy verdict for ML or rule-based runs | `backtest_results` + optional `model_output` | `evaluation` |
+| 8 | `run_debug_agent` | Diagnose failures and emit structured recovery hints | workspace artifacts + error context | `debug_notes` |
 
-`run_data_analysis` is available as a single-shot EDA alternative to `run_data_analyst`.
+`run_data_loader` is the default pipeline entry for market data; `load_data` is the low-level direct fetch.  
+`run_data_analysis` is a single-shot EDA alternative to `run_data_analyst`.
 
-**Registry** — `scripts/tools/__init__.py` → `TOOL_REGISTRY` (9 tools).  
+**Registry** — `scripts/tools/__init__.py` → `TOOL_REGISTRY` (11 tools).  
 **Routing** — `tool_routing.py` reads `docs/tools.md` for LLM routing; `subtask_heuristic.py` as fallback.  
 **Injection** — `workspace` and `event_callback` auto-injected when present in a tool's signature.
 
 ### Validations
 
+- `run_data_loader` — normalizes single-ticker Yahoo downloads into panel-style OHLCV names and checks usable non-null price coverage before accepting `raw_data`
 - `build_features` / `build_alphas` — rejects empty plans, sanitizes target column names, post-checks output contains target
 - `train_model` — aligns with `feature_plan.target_column` from workspace; auto-derives target from price if missing; time-ordered split for datetime data
-- `run_backtest` — pre-checks data/model column alignment before script generation
-- `executor` — detects tool-returned error dicts (not just Python exceptions)
+- `run_backtest` — pre-checks data/model column alignment in `model_based` mode and falls back to `rule_based` when no `model_output` exists
+- `evaluate_strategy` — can review backtest-only rule-based runs; no longer treats missing `model_output` as automatically incomplete
+- `executor` / workflow — detect tool-returned error dicts, emit debug + recovery events, and can retry a failed subtask once after recovery
 
 ---
 
@@ -305,6 +334,7 @@ Each run produces:
 - **`report.md`** — human-readable Markdown version of the same report
 - **`evaluation.json`** — LLM strategy verdict (rating, strengths, weaknesses, next steps)
 - **`backtest_results.json`** — Sharpe, drawdown, equity curve, turnover, etc.
+- **`debug_notes.json`** — structured failure analysis and suggested recovery actions when debugging runs
 - All workspace artifacts accessible via `GET /api/workspace/{run_id}/{name}`
 
 ---
@@ -317,10 +347,12 @@ Each run produces:
 |-------|------|-----------------|
 | `run_start` | Run begins | `run_id`, `goal` |
 | `decompose_done` | Plan ready | `total_subtasks`, `subtasks` |
+| `workflow_topo_order` | Topological execution order resolved | `order` |
 | `subtask_start` | Subtask starts | `subtask_title`, `position`, `total` |
 | `subtask_done` | Subtask ends | `status`, `summary`, `output` |
 | `workspace_update` | Artifact changed | `artifact_name` |
 | `debug_agent_done` | After automatic or tool debug analysis | `summary`, `category`, `subtask_id`, `debug_error` |
+| `recovery_step` | Recovery tool runs after a failure | `tool_name`, `reason`, `subtask_id` |
 | `step_think` | After each subtask (incl. skip) | `reasoning`, `tools_to_consider`, `note_for_next_step`, `next_subtask_id` |
 | `data_analyst_round` | Analyst loop | `stage`, `round`, `ready`, `reasoning` |
 | `data_loader_round` | Data-ingest judge loop | `spec_propose` / `load_done` / `judge_done` |
@@ -361,7 +393,7 @@ AGENT_DB_PATH=./data/agent.db
 | Mid-run `revise_plan` | Placeholder |
 | Metric-driven auto-iteration (e.g. Sharpe threshold → retry) | Planned |
 | Multi-asset panel support | Planned |
-| Classification models (long/short signal) | Planned |
+| Native classification training in `train_model` | Planned |
 | Tests & CI | To add |
 
 ---
