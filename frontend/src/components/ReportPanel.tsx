@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
+import { PostRunChat } from './PostRunChat'
 import type { AgentEvent } from '../types'
 
 type ReportPanelProps = {
@@ -532,6 +533,8 @@ export function ReportPanel({ events, runId }: ReportPanelProps) {
           </div>
         </div>
       )}
+
+      {runId && <PostRunChat runId={runId} runGoal={metrics.goal} />}
     </section>
   )
 }

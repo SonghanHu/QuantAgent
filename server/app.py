@@ -50,9 +50,38 @@ class ClarifyRequest(BaseModel):
     model: str | None = None
 
 
+class PostRunChatRequest(BaseModel):
+    """Follow-up chat after a run; server injects workspace context."""
+
+    messages: list[dict[str, str]] = Field(min_length=1)
+    model: str | None = None
+    goal: str | None = Field(
+        default=None,
+        description="Optional original run goal (from UI); improves answers if not in artifacts.",
+    )
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/api/run/{run_id}/chat")
+def post_run_chat(run_id: str, req: PostRunChatRequest) -> dict[str, Any]:
+    """Chat with an LLM grounded in the completed run's workspace (report, evaluation, etc.)."""
+    from agent.post_run_chat import build_run_context_pack, chat_with_run_context
+
+    ws = _open_workspace(run_id)
+    try:
+        pack = build_run_context_pack(ws, goal=req.goal)
+        if len(pack) > 120_000:
+            pack = pack[:119_000] + "\n\n...[context truncated for size]..."
+        reply = chat_with_run_context(context_pack=pack, messages=req.messages, model=req.model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"reply": reply, "run_id": run_id}
 
 
 @app.post("/api/clarify")

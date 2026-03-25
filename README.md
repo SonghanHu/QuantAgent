@@ -1,6 +1,6 @@
 # QuantAgent
 
-Natural-language **research agent** for quant workflows: decompose a goal into subtasks, route tools, load data, engineer features or WorldQuant-style alphas, optionally train models, backtest rule-based or predictive strategies, evaluate performance, and emit an LLM-written final report (JSON + Markdown). Progress streams to a **real-time dashboard** via WebSocket.
+Natural-language **research agent** for quant workflows: decompose a goal into subtasks, route tools, load data, engineer features or WorldQuant-style alphas, optionally train models, backtest rule-based or predictive strategies, evaluate performance, and emit an LLM-written final report (JSON + Markdown). Progress streams to a **real-time dashboard** via WebSocket. After a run finishes, the dashboard can **continue a grounded chat** with the same workspace context (reports, evaluation, backtest summary, feature plan, etc.).
 
 ---
 
@@ -8,7 +8,7 @@ Natural-language **research agent** for quant workflows: decompose a goal into s
 
 QuantAgent has four layers:
 
-1. A React dashboard submits a goal, streams progress, and previews workspace artifacts in real time.
+1. A React dashboard submits a goal, streams progress, previews workspace artifacts, and (after `run_done`) offers post-run Q&A grounded in those artifacts.
 2. A FastAPI server starts runs, persists run metadata, and relays events over WebSocket.
 3. The workflow orchestrator decomposes the goal into tool-shaped subtasks, executes them in dependency order, and records artifacts plus status.
 4. The tool layer mixes fixed implementations (`yfinance`, sklearn, SQLite/workspace IO) with skill-driven code generation for analysis, feature engineering, alpha construction, and backtesting.
@@ -27,6 +27,7 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │  GoalInput ──▶ POST /api/run ──▶ run_id                          │
 │  useAgentSocket ◀── WebSocket /ws/{run_id} ◀── EventBus          │
 │  ArtifactPanel ──▶ GET /api/workspace/{run_id}/{artifact}        │
+│  ReportPanel ──▶ POST /api/run/{run_id}/chat (after run_done)    │
 │  ProgressBar · LogPanel · WorkflowGraph · ReportPanel            │
 └──────────────────────────┬────────────────────────────────────────┘
                            │  Vite proxy (dev) / same origin (prod)
@@ -35,6 +36,7 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │                                                                   │
 │  POST /api/run      ──▶ RunManager.start_run (daemon thread)     │
 │  POST /api/clarify  ──▶ Pre-execution goal clarification (LLM)   │
+│  POST /api/run/{id}/chat ──▶ Post-run Q&A (workspace context)     │
 │  WS   /ws/{run_id}  ──▶ EventBus.subscribe(replay=True)         │
 │  GET  /api/workspace/… ──▶ Workspace.list_artifacts / load       │
 │  GET  /api/health                                                │
@@ -121,7 +123,8 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │   │       ├── LogPanel.tsx        # Live event log
 │   │       ├── WorkflowGraph.tsx   # Agent pipeline / collaboration view
 │   │       ├── ArtifactPanel.tsx   # Workspace browser + preview
-│   │       └── ReportPanel.tsx     # LLM final report + metrics
+│   │       ├── ReportPanel.tsx     # LLM final report + metrics
+│   │       └── PostRunChat.tsx     # Post-run Q&A (grounded on workspace)
 │   ├── vite.config.ts          # Dev proxy: /api → :8000, /ws → ws://:8000
 │   └── dist/                   # Production build (served by FastAPI)
 │
@@ -150,6 +153,7 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │   │   ├── debug_agent.py      # Failure diagnosis + structured recovery hints
 │   │   ├── step_thinking.py    # Post-step reflection for next-tool guidance
 │   │   ├── report_gen.py       # LLM final report → JSON + Markdown
+│   │   ├── post_run_chat.py    # Build context pack + chat after run (API)
 │   │   └── plan_revision.py    # revise_plan (placeholder)
 │   ├── llm/
 │   │   ├── task_decompose.py   # NL → TaskBreakdown (4-8 tool-aligned subtasks)
@@ -296,7 +300,7 @@ uv run python scripts/llm/task_decompose.py "Your research goal"
 
 | Role | Env var | Typical model | Used by |
 |------|---------|---------------|---------|
-| **Code generation** | `OPENAI_TASK_MODEL` | gpt-4o-mini / gpt-5.4-mini | analysis_skill, feature_skill, alpha_skill, backtest_skill |
+| **Code generation** | `OPENAI_TASK_MODEL` | gpt-4o-mini / gpt-5.4-mini | analysis_skill, feature_skill, alpha_skill, backtest_skill, `post_run_chat` (dashboard) |
 | **Routing / judging** | `OPENAI_SMALL_MODEL` | gpt-4o-nano / gpt-5.4-nano | decomposition, tool routing, data analyst judge, feature planner, evaluation, report |
 
 All skills use `parse_script_with_retry()` (up to 2 retries on JSON parse errors).
@@ -326,6 +330,20 @@ API: `POST /api/clarify { goal, conversation }` returns `{ understood, refined_g
 
 ---
 
+## Post-run chat (dashboard)
+
+After **`run_done`**, the **Final report** panel shows **Ask about this run**: a multi-turn chat whose system prompt includes a **context pack** built from `data/workspaces/{run_id}/` (e.g. `final_report`, `evaluation`, `feature_plan`, `backtest_results` without long equity curves, `model_output`, `search_context`, `debug_notes`, excerpt of `report.md`, and column names / shapes for `engineered_data` / `raw_data`). Full OHLCV series are not pasted into the model.
+
+**API**
+
+- `POST /api/run/{run_id}/chat`
+- Body: `{ "messages": [ { "role": "user"|"assistant", "content": "..." }, ... ], "goal": "<optional original run goal>", "model": "<optional override>" }`
+- Response: `{ "reply": "...", "run_id": "..." }`
+
+Uses **`OPENAI_TASK_MODEL`** if set, otherwise **`OPENAI_SMALL_MODEL`**. Context is capped (roughly ~120k chars server-side).
+
+---
+
 ## Output
 
 Each run produces:
@@ -336,6 +354,7 @@ Each run produces:
 - **`backtest_results.json`** — Sharpe, drawdown, equity curve, turnover, etc.
 - **`debug_notes.json`** — structured failure analysis and suggested recovery actions when debugging runs
 - All workspace artifacts accessible via `GET /api/workspace/{run_id}/{name}`
+- **Post-run chat** — same run id; see [Post-run chat (dashboard)](#post-run-chat-dashboard) (not persisted as a separate artifact by default)
 
 ---
 
@@ -368,8 +387,8 @@ Each run produces:
 OPENAI_API_KEY=sk-...
 
 # Recommended
-OPENAI_TASK_MODEL=gpt-4o-mini      # Code generation (larger, more capable)
-OPENAI_SMALL_MODEL=gpt-4o-nano     # Routing, judging, planning (fast, cheap)
+OPENAI_TASK_MODEL=gpt-4o-mini      # Code generation + post-run chat (larger, more capable)
+OPENAI_SMALL_MODEL=gpt-4o-nano     # Routing, judging, planning (fast, cheap); fallback for post-run chat if TASK unset
 
 # Optional
 OPENAI_BASE_URL=https://api.openai.com/v1
