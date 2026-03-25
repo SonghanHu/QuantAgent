@@ -8,7 +8,7 @@ Natural-language **research agent** for quant workflows: decompose a goal into s
 
 QuantAgent has four layers:
 
-1. A React dashboard submits a goal, streams progress, and uses **tabbed panels** (**Activity** = pipeline + live log, **Workspace** = artifacts + **LLM-generated Python scripts** preview, **Report** = final report + post-run Q&A). After `run_done`, **Ask about this run** stays grounded in workspace artifacts.
+1. A React dashboard submits a goal, streams progress, and uses **tabbed panels** (**Activity** = pipeline + live log, **Workspace** = artifacts + **LLM-generated Python scripts** preview + **interactive equity chart** when `equity_viz` exists, **Report** = final report + post-run Q&A). After `run_done`, **Ask about this run** stays grounded in workspace artifacts.
 2. A FastAPI server starts runs, persists run metadata, and relays events over WebSocket.
 3. The workflow orchestrator decomposes the goal into tool-shaped subtasks, executes them in dependency order, and records artifacts plus status.
 4. The tool layer mixes fixed implementations (`yfinance`, sklearn, SQLite/workspace IO) with skill-driven code generation for analysis, feature engineering, alpha construction, and backtesting.
@@ -27,7 +27,7 @@ The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_b
 │  GoalInput ──▶ POST /api/run ──▶ run_id                          │
 │  useAgentSocket ◀── WebSocket /ws/{run_id} ◀── EventBus          │
 │  GET /api/workspace/{id} (manifest + agent_scripts)             │
-│  ArtifactPanel ──▶ artifacts + GET …/agent-scripts/{id} (code) │
+│  ArtifactPanel ──▶ artifacts, equity_viz chart, …/files (PNG), scripts │
 │  ReportPanel ──▶ POST /api/run/{run_id}/chat (after run_done)    │
 │  Tabs: Activity · Workspace · Report (keys 1–3)                  │
 └──────────────────────────┬────────────────────────────────────────┘
@@ -40,6 +40,7 @@ The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_b
 │  POST /api/run/{id}/chat ──▶ Post-run Q&A (workspace context)     │
 │  WS   /ws/{run_id}  ──▶ EventBus.subscribe(replay=True)         │
 │  GET  /api/workspace/{id} ──▶ manifest (+ agent_scripts list)      │
+│  GET  /api/workspace/{id}/files/{artifact} ──▶ binary (e.g. PNG) │
 │  GET  /api/workspace/{id}/{artifact} | …/agent-scripts/{key}    │
 │  GET  /api/health                                                │
 │  Static: frontend/dist (prod) or proxy to :5173 (dev)            │
@@ -56,6 +57,7 @@ The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_b
 │      revise_plan (optional) → restart topo; else halt downstream  │
 │  emit step_think after each step (unless STEP_THINKING=0)         │
 │  generate_report (LLM) ──▶ final_report.json + report.md        │
+│  equity_viz (if backtest_results) ──▶ equity_viz.json + chart PNG │
 │  save final state ──▶ SQLite + Workspace                         │
 └──────────────────────────┬────────────────────────────────────────┘
                            │
@@ -85,6 +87,7 @@ The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_b
 │    ├── search_context.json                                        │
 │    ├── debug_notes.json                                           │
 │    ├── final_report.json                                          │
+│    ├── equity_viz.json, equity_chart.png (optional, post-report)  │
 │    └── report.md  ◀── human-readable final report                │
 │  SQLite: data/agent.db  (runs + log_entries)                     │
 │  Skills output: data/{analysis,feature,alpha,backtest}_runs/     │
@@ -124,7 +127,8 @@ The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_b
 │   │       ├── ProgressBar.tsx     # Subtask progress + connection status
 │   │       ├── LogPanel.tsx        # Live event log
 │   │       ├── WorkflowGraph.tsx   # Agent pipeline / collaboration view
-│   │       ├── ArtifactPanel.tsx   # Workspace browser + preview
+│   │       ├── ArtifactPanel.tsx   # Workspace browser + preview (incl. equity_viz)
+│   │       ├── EquityVizPreview.tsx # Interactive equity + trade markers (SVG)
 │   │       ├── ReportPanel.tsx     # LLM final report + metrics
 │   │       └── PostRunChat.tsx     # Post-run Q&A (grounded on workspace)
 │   ├── vite.config.ts          # Dev proxy: /api → :8000, /ws → ws://:8000
@@ -141,7 +145,8 @@ The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_b
 │   │   ├── models.py           # Subtask, TaskBreakdown (Pydantic)
 │   │   ├── state.py            # AgentState, ExecutionRecord
 │   │   ├── events.py           # EventBus: thread-safe pub/sub + replay
-│   │   ├── workspace.py        # Workspace: parquet/JSON artifacts
+│   │   ├── workspace.py        # Workspace: parquet/JSON/binary (e.g. PNG) artifacts
+│   │   ├── equity_viz.py       # Post-run: equity_viz.json + equity_chart from backtest_results
 │   │   ├── executor.py         # run_subtask: route → tool → log (error-aware)
 │   │   ├── tool_routing.py     # LLM SubtaskToolChoice + keyword fallback
 │   │   ├── subtask_heuristic.py# Keyword routing fallback
@@ -297,7 +302,7 @@ uv run python scripts/llm/task_decompose.py "Your research goal"
 | 4a | `build_features` | Feature engineering from plan | `raw_data` + `feature_plan` | `engineered_data` |
 | 4b | `build_alphas` | WorldQuant-style alpha construction | `raw_data` + `feature_plan` + `search_context` | `engineered_data` |
 | 5 | `train_model` | sklearn regression / tuning | `engineered_data` (or `raw_data`) | `model_output` |
-| 6 | `run_backtest` | Skill-driven backtest in `model_based` or `rule_based` mode | `engineered_data`/`raw_data` + optional `model_output` | `backtest_results` |
+| 6 | `run_backtest` | Skill-driven backtest in `model_based` or `rule_based` mode; if `rebalance_freq` is omitted, **infers** `weekly`/`monthly` from `feature_plan` text when it matches (else `daily`) | `engineered_data`/`raw_data` + optional `model_output` | `backtest_results` |
 | 7 | `evaluate_strategy` | LLM strategy verdict for ML or rule-based runs | `backtest_results` + optional `model_output` | `evaluation` |
 | 8 | `run_debug_agent` | Diagnose failures and emit structured recovery hints | workspace artifacts + error context | `debug_notes` |
 
@@ -313,7 +318,7 @@ uv run python scripts/llm/task_decompose.py "Your research goal"
 - `run_data_loader` — normalizes single-ticker Yahoo downloads into panel-style OHLCV names and checks usable non-null price coverage before accepting `raw_data`
 - `build_features` / `build_alphas` — rejects empty plans, sanitizes target column names, post-checks output contains target
 - `train_model` — aligns with `feature_plan.target_column` from workspace; auto-derives target from price if missing; time-ordered split for datetime data
-- `run_backtest` — pre-checks data/model column alignment in `model_based` mode and falls back to `rule_based` when no `model_output` exists
+- `run_backtest` — pre-checks data/model column alignment in `model_based` mode and falls back to `rule_based` when no `model_output` exists; **backtest skill** discourages using `target_pos*` / plan `target_column` as raw weights when they act as labels (prefer signal/score columns + lag). Optional `equity_dates` / `trade_events` in JSON feed the dashboard chart
 - `evaluate_strategy` — can review backtest-only rule-based runs; no longer treats missing `model_output` as automatically incomplete
 - `executor` / workflow — detect tool-returned error dicts, emit debug + recovery events, **subtask retries** (`SUBTASK_FAILURE_RETRIES`), optional **replan** (`REPLAN_MAX`), and **halt** downstream on hard failure when `PIPELINE_HALT_ON_FAILURE=1`
 
@@ -377,7 +382,10 @@ Each run produces:
 - **`backtest_results.json`** — Sharpe, drawdown, equity curve, turnover, etc.
 - **`debug_notes.json`** — structured failure analysis and suggested recovery actions when debugging runs
 - **`GET /api/workspace/{run_id}`** — manifest (artifact list, sizes, **`agent_scripts`**: id, path, kind, mtime)
-- **`GET /api/workspace/{run_id}/{artifact}`** — JSON artifact body
+- **`GET /api/workspace/{run_id}/{artifact}`** — JSON or dataframe preview, or `{ kind: "image", url }` for PNG artifacts
+- **`GET /api/workspace/{run_id}/files/{artifact_name}`** — raw image (or other binary) for manifest entries with `kind: image`
+- **`equity_viz.json`** — normalized dates, equity series, optional `trade_events` (Workspace tab renders an interactive chart)
+- **`equity_chart.png`** — static matplotlib overview (same run)
 - **`GET /api/workspace/{run_id}/agent-scripts/{script_id}`** — text preview of generated `.py` under `data/*_runs/{run_id}/`
 - **Post-run chat** — same run id; see [Post-run chat (dashboard)](#post-run-chat-dashboard) (not persisted as a separate artifact by default)
 
