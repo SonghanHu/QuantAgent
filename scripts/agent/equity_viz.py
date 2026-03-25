@@ -21,17 +21,36 @@ import pandas as pd
 from agent.workspace import Workspace
 
 
+def _is_placeholder_date_series(dates: list[str]) -> bool:
+    """Reject obviously bogus date labels such as repeated Unix epoch placeholders."""
+    cleaned = [str(d)[:10] for d in dates if str(d).strip()]
+    if not cleaned:
+        return True
+    unique = set(cleaned)
+    if len(unique) == 1 and next(iter(unique)) == "1970-01-01":
+        return True
+    if len(unique) == 1 and len(cleaned) > 3:
+        return True
+    return False
+
+
 def _build_date_series(bt: dict[str, Any], n: int) -> list[str]:
     raw = bt.get("equity_dates")
     if isinstance(raw, list) and len(raw) == n:
-        return [str(x)[:10] if x is not None else "" for x in raw]
+        parsed = [str(x)[:10] if x is not None else "" for x in raw]
+        if not _is_placeholder_date_series(parsed):
+            return parsed
 
     ts = bt.get("test_start")
     te = bt.get("test_end")
     if ts and te and n > 0:
         try:
-            dr = pd.date_range(start=str(ts)[:10], end=str(te)[:10], periods=n)
-            return [d.strftime("%Y-%m-%d") for d in dr]
+            start = str(ts)[:10]
+            end = str(te)[:10]
+            dr = pd.date_range(start=start, end=end, periods=n)
+            parsed = [d.strftime("%Y-%m-%d") for d in dr]
+            if not _is_placeholder_date_series(parsed):
+                return parsed
         except Exception:  # noqa: BLE001
             pass
     return [str(i) for i in range(n)]
@@ -116,7 +135,10 @@ def _render_png(dates: list[str], equity: list[float], trades: list[dict[str, An
             linewidths=0.4,
         )
     ax.set_title("Equity curve")
-    ax.set_xlabel("Trading day index")
+    if dates and all(d.isdigit() for d in dates[: min(len(dates), 5)]):
+        ax.set_xlabel("Trading day index")
+    else:
+        ax.set_xlabel("Trading day")
     ax.set_ylabel("Portfolio value")
     if dates and len(dates) == len(equity):
         step = max(1, len(dates) // 8)

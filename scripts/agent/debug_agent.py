@@ -24,9 +24,12 @@ class RecoveryStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool_name: str = Field(description="Registry tool name to run for recovery.")
-    kwargs: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Tool kwargs only; runtime fields like workspace are injected by the workflow.",
+    kwargs_json: str = Field(
+        default="{}",
+        description=(
+            "Stringified JSON object of tool kwargs only (no workspace). "
+            'Example: {"tickers": ["SPY"], "period": "1y"}'
+        ),
     )
     reason: str = Field(default="", description="Why this recovery step helps.")
 
@@ -149,12 +152,21 @@ def run_debug_analysis(
         "produce a concise diagnosis. Prefer concrete causes (e.g. pandas index alignment, "
         "missing parquet column, subprocess exit code). "
         "Do not invent files that are not mentioned; if uncertain, say so in root_cause.\n\n"
+        "**`run_backtest` (skill-generated scripts):** The runner prepends a fixed preamble that defines "
+        "`BACKTEST_CONFIG_JSON`, `_CFG`/`config` from `json.loads`, `get_rebalance_freq()`, and module-level "
+        "`effective_rebalance`. If the error is `effective_rebalance` undefined or UnboundLocalError, the usual "
+        "cause is **Python scoping**: the generated code uses `effective_rebalance` inside a `def`/`lambda` "
+        "where Python treats it as a local. The fix is to use `get_rebalance_freq()` or `config['rebalance_freq']` "
+        "inside nested functions, or declare `global effective_rebalance`. Do **not** advise inventing ad-hoc "
+        "values like `'1D'` for rebalance cadence — this codebase uses `daily`/`weekly`/`monthly` strings from config. "
+        "Workspace may also contain `backtest_generated.py` mirroring the script under `data/backtest_runs/`.\n\n"
         "When useful, propose a SMALL recovery sequence using these tool names only: "
         "`web_search`, `run_data_loader`, `load_data`, `run_data_analyst`, `run_data_analysis`, `build_features`.\n"
         "Use `should_retry_upstream=true` only when upstream data/context is actually missing and a short tool sequence "
         "could repair it within the current run. Prefer 1-3 recovery steps. "
         "If the failure is just local code generation / syntax and existing artifacts are sufficient, leave "
-        "`should_retry_upstream=false` and let the failed subtask be retried directly or fixed in place."
+        "`should_retry_upstream=false` and let the failed subtask be retried directly or fixed in place.\n"
+        "For each recovery step, set `kwargs_json` to a JSON **string** of kwargs (e.g. '{}'), not a nested object."
     )
 
     try:

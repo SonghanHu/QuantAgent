@@ -75,6 +75,7 @@ def execute_backtest_skill(
     timeout_sec: int = 180,
     session_run_id: str | None = None,
     revision_context: str | None = None,
+    workspace: Any | None = None,
 ) -> dict[str, Any]:
     """
     Generate and run a backtest script using the ``backtest`` skill.
@@ -83,6 +84,9 @@ def execute_backtest_skill(
     the script whether to run in model-based or rule-based mode.
 
     Use ``session_run_id`` so retries reuse the same ``backtest.py`` path.
+
+    If ``workspace`` is set, the full script is also saved as ``backtest_generated.py`` in the
+    workspace so the dashboard can open it under Artifacts (same content as ``data/backtest_runs/``).
     """
     load_dotenv()
     m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
@@ -115,13 +119,19 @@ BACKTEST_CONFIG_JSON = {repr(config_str)}
 BACKTEST_MODE = {repr(backtest_mode)}
 STRATEGY_CONTEXT_JSON = {repr(context_str)}
 MODEL_OUTPUT_JSON = {repr(model_str)}
+_CFG = json.loads(BACKTEST_CONFIG_JSON)
+config = _CFG
+effective_rebalance = str(_CFG.get("rebalance_freq") or "daily")
 '''
 
     system = (
         "You output structured JSON with a single field `script` — executable Python code only. "
         "Follow the skill specification exactly. Use only allowed imports. "
-        "The preamble defining DATA_PATH, OUTPUT_JSON, RUN_DIR, BACKTEST_CONFIG_JSON, "
-        "BACKTEST_MODE, STRATEGY_CONTEXT_JSON, MODEL_OUTPUT_JSON will be prepended for you."
+        "The preamble defines DATA_PATH, OUTPUT_JSON, RUN_DIR, BACKTEST_CONFIG_JSON, "
+        "BACKTEST_MODE, STRATEGY_CONTEXT_JSON, MODEL_OUTPUT_JSON, plus parsed `_CFG`/`config` and "
+        "`get_rebalance_freq()`, `effective_rebalance` (module level). Inside **nested functions**, call "
+        "`get_rebalance_freq()` or use `config['rebalance_freq']` — do not rely on bare `effective_rebalance` "
+        "inside `def` blocks (Python may treat it as a local and raise UnboundLocalError)."
     )
     user = (
         f"## Skill\n\n{skill}\n\n"
@@ -146,6 +156,17 @@ MODEL_OUTPUT_JSON = {repr(model_str)}
 
     full_source = preamble + "\n\n" + body + "\n"
     script_path.write_text(full_source, encoding="utf-8")
+
+    if workspace is not None:
+        try:
+            workspace.save_text(
+                "backtest_generated",
+                full_source,
+                ext="py",
+                description="Generated backtest script (mirror of data/backtest_runs/<run_id>/backtest.py)",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     proc = subprocess.run(
         [sys.executable, str(script_path)],

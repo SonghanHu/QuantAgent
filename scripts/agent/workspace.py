@@ -130,6 +130,27 @@ class Workspace:
         self._flush_manifest()
         return path
 
+    def save_text(
+        self,
+        name: str,
+        text: str,
+        *,
+        ext: str = "txt",
+        description: str = "",
+    ) -> Path:
+        """Write UTF-8 text (e.g. generated ``.py``) and register as ``kind: text`` for API preview."""
+        safe_ext = ext.lstrip(".") or "txt"
+        path = self.root / f"{name}.{safe_ext}"
+        path.write_text(text, encoding="utf-8")
+        self._manifest[name] = ArtifactMeta(
+            name=name,
+            path=str(path),
+            kind="text",
+            description=description,
+        )
+        self._flush_manifest()
+        return path
+
     def discard(self, name: str) -> None:
         """Remove an artifact from the manifest and delete its file if present."""
         meta = self._manifest.pop(name, None)

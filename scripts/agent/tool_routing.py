@@ -7,15 +7,15 @@ Falls back to keyword heuristics when LLM is disabled, misconfigured, or invalid
 from __future__ import annotations
 
 import inspect
-import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tools import TOOL_REGISTRY
 
@@ -24,14 +24,15 @@ from .subtask_heuristic import subtask_to_tool_name
 
 
 class SubtaskToolChoice(BaseModel):
-    """Model output: exactly one tool + optional arguments (JSON string for OpenAI schema)."""
+    """Model output: exactly one tool + optional arguments (object, not a string of JSON)."""
 
     model_config = ConfigDict(extra="forbid")
 
     tool_name: str = Field(description="Must be one of the allowed registry names.")
-    kwargs_json: str = Field(
-        default="{}",
-        description='JSON object as a string, e.g. {"dataset": "demo"}. Use "{}" if no arguments.',
+    kwargs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arguments for that tool as a JSON object. Use {} if none. "
+        "Keep string values short or escape quotes; invalid JSON breaks routing.",
     )
 
 
@@ -39,7 +40,18 @@ class SubtaskToolChoice(BaseModel):
 class ResolvedTool:
     tool_name: str
     kwargs: dict[str, Any]
-    source: Literal["llm", "heuristic"]
+    source: Literal["explicit", "llm", "heuristic"]
+
+
+def _explicit_tool_name_from_title(title: str) -> str | None:
+    """Honor an exact registry tool name when the planner already wrote it into the title."""
+    text = (title or "").strip()
+    if not text:
+        return None
+    for name in sorted(TOOL_REGISTRY, key=len, reverse=True):
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", text):
+            return name
+    return None
 
 
 def _scripts_root() -> Path:
@@ -92,6 +104,9 @@ def resolve_subtask_tool(
     ``tool_name``, the prompt is nudged with the allowed list before falling back.
     """
     valid = sorted(TOOL_REGISTRY)
+    explicit_name = _explicit_tool_name_from_title(subtask.title)
+    if explicit_name is not None:
+        return ResolvedTool(explicit_name, {}, "explicit")
 
     if not use_llm:
         name = subtask_to_tool_name(subtask)
@@ -113,7 +128,8 @@ def resolve_subtask_tool(
     allowed_line = ", ".join(valid)
     system = (
         "You route a single research subtask to exactly one tool from the allowed list. "
-        "Choose tool_name and kwargs only; kwargs must match that tool's parameters. "
+        "Return tool_name and a kwargs object (not a stringified JSON blob). "
+        "kwargs must match that tool's parameters; use {} if no arguments. "
         f"Allowed tool_name values: {allowed_line}."
     )
     user = (
@@ -129,12 +145,38 @@ def resolve_subtask_tool(
     ]
 
     for _ in range(max_retries):
-        completion = cli.chat.completions.parse(
-            model=m,
-            messages=cast(Any, messages),
-            response_format=SubtaskToolChoice,
-        )
-        parsed = completion.choices[0].message.parsed
+        try:
+            completion = cli.chat.completions.parse(
+                model=m,
+                messages=cast(Any, messages),
+                response_format=SubtaskToolChoice,
+            )
+            parsed = completion.choices[0].message.parsed
+        except ValidationError as exc:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Structured output failed validation. Respond again with valid JSON matching the schema: "
+                        "tool_name from the allowed list, kwargs as a JSON object (use {} if none). "
+                        f"Error (truncated): {str(exc)[:600]}"
+                    ),
+                }
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001 — SDK may wrap parse/HTTP errors
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Could not parse structured tool choice. Retry: tool_name from the allowed list, "
+                        "kwargs as a plain object only. "
+                        f"Error (truncated): {str(exc)[:600]}"
+                    ),
+                }
+            )
+            continue
+
         if parsed is None:
             messages.append(
                 {
@@ -145,13 +187,7 @@ def resolve_subtask_tool(
             continue
 
         if parsed.tool_name in TOOL_REGISTRY:
-            raw_kw: Any
-            try:
-                raw_kw = json.loads(parsed.kwargs_json or "{}")
-            except json.JSONDecodeError:
-                raw_kw = {}
-            if not isinstance(raw_kw, dict):
-                raw_kw = {}
+            raw_kw = dict(parsed.kwargs) if isinstance(parsed.kwargs, dict) else {}
             clean = filter_kwargs_for_tool(parsed.tool_name, cast(dict[str, Any], raw_kw))
             return ResolvedTool(parsed.tool_name, clean, "llm")
 

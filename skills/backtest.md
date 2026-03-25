@@ -81,7 +81,7 @@ A **single Python script** that:
 6. Optionally saves an equity curve plot to `RUN_DIR / "equity.png"` (matplotlib, `savefig` only, never `show()`).
 7. Prints a short human-readable recap to stdout (≤ 40 lines).
 
-For `test_start` / `test_end` / `n_test_days`: use the **actual** first/last **dates** of the return series you evaluated (prefer the DataFrame’s **DatetimeIndex**). If the index is not datetimes, convert or derive dates from a date column — **never** emit placeholder epochs like `1970-01-01` unless that date truly appears in the data.
+For `test_start` / `test_end` / `n_test_days`: use the **actual** first/last **dates** of the return series you evaluated (prefer the DataFrame’s **DatetimeIndex**). If the index is not datetimes, convert or derive dates from a date column. **Never** derive dates by coercing arbitrary numeric columns into timestamps, and **never** emit placeholder epochs like `1970-01-01` unless that date truly appears in the data. If no trustworthy dates exist, omit `equity_dates` and explain the limitation in `notes` rather than fabricating dates.
 
 ## Rules
 
@@ -107,3 +107,8 @@ For `test_start` / `test_end` / `n_test_days`: use the **actual** first/last **d
 - `BACKTEST_MODE: str` — `"model_based"` or `"rule_based"`
 - `STRATEGY_CONTEXT_JSON: str` — serialized strategy context (feature plan, data columns, hints)
 - `MODEL_OUTPUT_JSON: str` — serialized model training output (present mainly for `model_based`)
+- `_CFG` / `config` — `dict` from `json.loads(BACKTEST_CONFIG_JSON)` (use for all hyperparameters)
+- `get_rebalance_freq()` — **preferred inside nested functions** (returns rebalance cadence string)
+- `effective_rebalance` — module-level `str` alias; **do not read this name inside `def`/`lambda` bodies** unless you `global effective_rebalance` — use `get_rebalance_freq()` there to avoid `UnboundLocalError`
+
+The full runnable file is written to `RUN_DIR / "backtest.py"` and mirrored into the workspace as `backtest_generated.py` for the dashboard.

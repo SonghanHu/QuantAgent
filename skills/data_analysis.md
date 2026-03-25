@@ -8,9 +8,14 @@ You write a **single runnable Python script** (the runtime will prepend a small 
 
 1. If `DATA_PATH` is a non-empty string: load it with **pandas** (`read_csv` or `read_parquet` by suffix). If `DATA_PATH` is `None`: build a small **synthetic** `DataFrame` so the script still runs (e.g. `np.random.default_rng` + `pd.DataFrame`), and state that in the summary.
 2. Compute **descriptive** stats: `dtypes`, `shape`, missing counts / share, numeric `describe()`, optional correlation matrix for numeric columns (no huge prints — cap width).
-3. Write a **JSON summary** to `OUTPUT_JSON` (path injected): keys at least `shape`, `columns`, `dtypes` (as str list or dict), `missing_pct` (per column or top 20), `notes` (short strings about issues). Optional: `numeric_describe` as nested dict with stringified floats.
-4. **Print** a short human-readable recap to stdout (≤ ~40 lines).
-5. **No network**, no subprocess, no shelling out, no `eval`/`exec` on untrusted strings, no reading arbitrary paths — only `DATA_PATH` and `OUTPUT_JSON`.
+3. Detect the **true trading date axis** safely:
+   - Prefer a `DatetimeIndex` if present.
+   - Else look for an explicit date/datetime column (`date`, `datetime`, `timestamp`, etc.).
+   - **Never** infer date coverage by coercing arbitrary numeric columns (such as prices, dividends, or capital gains) into datetimes; that is how fake `1970-01-01` outputs happen.
+   - If no trustworthy date axis exists, say so explicitly in `notes` instead of fabricating one.
+4. Write a **JSON summary** to `OUTPUT_JSON` (path injected): keys at least `shape`, `columns`, `dtypes` (as str list or dict), `missing_pct` (per column or top 20), `notes` (short strings about issues). Include `date_coverage` when you found a trustworthy date axis. Optional: `numeric_describe` as nested dict with stringified floats.
+5. **Print** a short human-readable recap to stdout (≤ ~40 lines).
+6. **No network**, no subprocess, no shelling out, no `eval`/`exec` on untrusted strings, no reading arbitrary paths — only `DATA_PATH` and `OUTPUT_JSON`.
 
 ## Allowed imports
 

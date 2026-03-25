@@ -268,12 +268,27 @@ def workspace_artifact(run_id: str, artifact_name: str) -> dict[str, Any]:
             "kind": "image",
             "url": f"/api/workspace/{run_id}/files/{artifact_name}",
         }
+    if meta["kind"] == "text":
+        path = ws.artifact_path(artifact_name)
+        content = path.read_text(encoding="utf-8", errors="replace")
+        if len(content) > 400_000:
+            content = content[:399_000] + "\n\n...[truncated for preview]..."
+        suffix = path.suffix.lower()
+        language = "python" if suffix == ".py" else None
+        return {
+            "artifact_name": artifact_name,
+            "kind": "text",
+            "language": language,
+            "content": content,
+        }
     raise HTTPException(status_code=400, detail=f"unsupported artifact kind: {meta['kind']}")
 
 
 def _open_workspace(run_id: str) -> Workspace:
     path = WORKSPACES_ROOT / run_id
     if not path.is_dir():
+        if run_manager.get_run(run_id) is not None:
+            return Workspace(path, run_id=run_id)
         raise HTTPException(status_code=404, detail=f"workspace not found for run_id={run_id}")
     return Workspace(path, run_id=run_id)
 

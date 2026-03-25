@@ -83,6 +83,8 @@ def run_subtask(
             kwargs["goal"] = f"{subtask.title}\n\nOverall objective: {state.goal}"
         if "query" in sig_params and "query" not in kwargs:
             kwargs["query"] = subtask.description or subtask.title
+        if "instruction" in sig_params and "instruction" not in kwargs:
+            kwargs["instruction"] = subtask.description or subtask.title
 
     if tool_kwargs:
         kwargs.update(tool_kwargs)

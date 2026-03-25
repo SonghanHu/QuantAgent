@@ -88,6 +88,9 @@ def run_backtest(
         if train_ratio is not None
         else (1.0 if backtest_mode == "rule_based" else 0.7)
     )
+    rf_arg = (rebalance_freq or "").strip().lower()
+    inferred_rf = _infer_rebalance_freq_from_feature_plan(feature_plan) if not rf_arg else None
+    effective_rebalance = rf_arg or inferred_rf or "daily"
     if model_output is not None:
         target_col = str(model_output.get("target_column", "target"))
         feature_cols = model_output.get("feature_columns", [])
@@ -145,6 +148,7 @@ def run_backtest(
         data_path=data_path,
         timeout_sec=timeout_sec,
         session_run_id=workspace.run_id,
+        workspace=workspace,
     )
 
     # Persist any structured summary written by the script (including {"error": ...}).

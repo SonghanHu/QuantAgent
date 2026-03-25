@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 import os
 import sys
 from collections import defaultdict, deque
@@ -555,7 +556,16 @@ def run_workflow(
                                         recovery_ok = False
                                         break
                                     tool_name = str(step.get("tool_name") or "").strip()
-                                    step_kwargs = step.get("kwargs") if isinstance(step.get("kwargs"), dict) else {}
+                                    step_kwargs: dict[str, Any] = {}
+                                    if isinstance(step.get("kwargs"), dict):
+                                        step_kwargs = step["kwargs"]
+                                    elif isinstance(step.get("kwargs_json"), str) and step.get("kwargs_json", "").strip():
+                                        try:
+                                            parsed = json.loads(step["kwargs_json"])
+                                            if isinstance(parsed, dict):
+                                                step_kwargs = parsed
+                                        except json.JSONDecodeError:
+                                            step_kwargs = {}
                                     output, failed = run_recovery_step(
                                         owner_subtask=st,
                                         tool_name=tool_name,
