@@ -6,6 +6,8 @@ const W = 820
 const H = 300
 const PAD = { l: 52, r: 20, t: 20, b: 56 }
 
+const BENCH_STROKE = ['#94a3b8', '#fbbf24', '#a78bfa', '#4ade80', '#fb7185', '#38bdf8']
+
 function tradeColor(side: string) {
   const s = side.toLowerCase()
   if (s === 'buy') return '#4ade80'
@@ -16,11 +18,16 @@ function tradeColor(side: string) {
 export function EquityVizPreview({ payload }: { payload: EquityVizPayload }) {
   const [selectedListIndex, setSelectedListIndex] = useState<number | null>(null)
 
-  const { linePath, xScale, yScale, minE, maxE } = useMemo(() => {
+  const { linePath, benchPaths, xScale, yScale, minE, maxE } = useMemo(() => {
     const eq = payload.equity
+    const benches = payload.benchmarks ?? []
     const n = eq.length
-    const minV = Math.min(...eq)
-    const maxV = Math.max(...eq)
+    let minV = Math.min(...eq)
+    let maxV = Math.max(...eq)
+    for (const b of benches) {
+      minV = Math.min(minV, ...b.equity)
+      maxV = Math.max(maxV, ...b.equity)
+    }
     const span = maxV - minV || 1
     const innerW = W - PAD.l - PAD.r
     const innerH = H - PAD.t - PAD.b
@@ -32,8 +39,25 @@ export function EquityVizPreview({ payload }: { payload: EquityVizPayload }) {
       const y = ys(eq[i])
       parts.push(i === 0 ? `M ${x} ${y}` : `L ${x} ${y}`)
     }
-    return { linePath: parts.join(' '), xScale: xs, yScale: ys, minE: minV, maxE: maxV }
-  }, [payload.equity])
+    const bpaths: string[] = []
+    for (const b of benches) {
+      const seg: string[] = []
+      for (let i = 0; i < n; i++) {
+        const x = xs(i)
+        const y = ys(b.equity[i])
+        seg.push(i === 0 ? `M ${x} ${y}` : `L ${x} ${y}`)
+      }
+      bpaths.push(seg.join(' '))
+    }
+    return {
+      linePath: parts.join(' '),
+      benchPaths: bpaths,
+      xScale: xs,
+      yScale: ys,
+      minE: minV,
+      maxE: maxV,
+    }
+  }, [payload.equity, payload.benchmarks])
 
   const xTickStep = Math.max(1, Math.floor(payload.dates.length / 7))
 
@@ -44,7 +68,8 @@ export function EquityVizPreview({ payload }: { payload: EquityVizPayload }) {
   return (
     <div className="space-y-4">
       <p className="text-xs leading-relaxed text-slate-400">
-        净值曲线（交互）：点击圆点或下方交易行可高亮对应时点。区间约{' '}
+        净值曲线（交互）：青色为策略；虚线为基准（若回测输出 <code className="text-slate-500">benchmark_curves</code>
+        ）。点击圆点或下方交易行可高亮对应时点。区间约{' '}
         <span className="text-slate-300">
           {payload.dates[0] ?? '—'} — {payload.dates[payload.dates.length - 1] ?? '—'}
         </span>
@@ -66,6 +91,17 @@ export function EquityVizPreview({ payload }: { payload: EquityVizPayload }) {
             {minE.toLocaleString(undefined, { maximumFractionDigits: 0 })} —{' '}
             {maxE.toLocaleString(undefined, { maximumFractionDigits: 0 })}
           </text>
+          {payload.benchmarks?.map((b, bi) => (
+            <path
+              key={`bench-${bi}-${b.label}`}
+              d={benchPaths[bi]}
+              fill="none"
+              stroke={BENCH_STROKE[bi % BENCH_STROKE.length]}
+              strokeWidth="1.5"
+              strokeDasharray="6 4"
+              className="pointer-events-none opacity-[0.92]"
+            />
+          ))}
           <path
             d={`${linePath} L ${xScale(payload.equity.length - 1)} ${H - PAD.b} L ${xScale(0)} ${H - PAD.b} Z`}
             fill="url(#eqFill)"
@@ -119,6 +155,27 @@ export function EquityVizPreview({ payload }: { payload: EquityVizPayload }) {
           })}
         </svg>
       </div>
+
+      {payload.benchmarks && payload.benchmarks.length > 0 ? (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-400">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-5 bg-cyan-400" aria-hidden />
+            策略
+          </span>
+          {payload.benchmarks.map((b, bi) => (
+            <span key={`leg-${bi}`} className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-[2px] w-5 shrink-0"
+                style={{
+                  background: `repeating-linear-gradient(90deg, ${BENCH_STROKE[bi % BENCH_STROKE.length]} 0 5px, transparent 5px 9px)`,
+                }}
+                aria-hidden
+              />
+              {b.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {payload.trades.length > 0 ? (
         <div>

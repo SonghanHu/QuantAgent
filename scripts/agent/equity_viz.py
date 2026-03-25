@@ -56,6 +56,41 @@ def _build_date_series(bt: dict[str, Any], n: int) -> list[str]:
     return [str(i) for i in range(n)]
 
 
+def _parse_benchmark_curves(backtest: dict[str, Any], n: int) -> list[dict[str, Any]]:
+    """
+    Accept ``benchmark_curves`` (list of {label, equity}) or ``benchmarks`` as a dict label -> series.
+    Only includes series whose length matches ``n``.
+    """
+    raw = backtest.get("benchmark_curves")
+    if raw is None:
+        raw = backtest.get("benchmarks")
+    out: list[dict[str, Any]] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or item.get("name") or "Benchmark").strip() or "Benchmark"
+            eq = item.get("equity") if "equity" in item else item.get("values")
+            if not isinstance(eq, list) or len(eq) != n:
+                continue
+            try:
+                vals = [float(x) for x in eq]
+            except (TypeError, ValueError):
+                continue
+            out.append({"label": label[:160], "equity": vals})
+    elif isinstance(raw, dict):
+        for label, eq in raw.items():
+            if not isinstance(eq, list) or len(eq) != n:
+                continue
+            try:
+                vals = [float(x) for x in eq]
+            except (TypeError, ValueError):
+                continue
+            lab = str(label).strip() or "Benchmark"
+            out.append({"label": lab[:160], "equity": vals})
+    return out
+
+
 def _normalize_trades(trades: Any, dates: list[str]) -> list[dict[str, Any]]:
     if not isinstance(trades, list):
         return []
@@ -101,24 +136,44 @@ def build_equity_viz_payload(backtest: dict[str, Any]) -> dict[str, Any] | None:
     n = len(equity)
     dates = _build_date_series(backtest, n)
     trades = _normalize_trades(backtest.get("trade_events"), dates)
-    return {
+    benchmarks = _parse_benchmark_curves(backtest, n)
+    payload: dict[str, Any] = {
         "version": 1,
         "dates": dates,
         "equity": equity,
         "trades": trades,
     }
+    if benchmarks:
+        payload["benchmarks"] = benchmarks
+    return payload
 
 
-def _render_png(dates: list[str], equity: list[float], trades: list[dict[str, Any]]) -> bytes:
+_BENCH_COLORS = ("#94a3b8", "#fbbf24", "#a78bfa", "#4ade80", "#fb7185", "#38bdf8")
+
+
+def _render_png(
+    dates: list[str],
+    equity: list[float],
+    trades: list[dict[str, Any]],
+    benchmarks: list[dict[str, Any]] | None = None,
+) -> bytes:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(10, 4), dpi=120)
+    fig, ax = plt.subplots(figsize=(10, 4.2), dpi=120)
     xs = list(range(len(equity)))
-    ax.plot(xs, equity, color="#22d3ee", linewidth=1.2, label="Equity")
-    ax.fill_between(xs, equity, alpha=0.12, color="#22d3ee")
+    ax.plot(xs, equity, color="#22d3ee", linewidth=1.4, label="Strategy", zorder=3)
+    ax.fill_between(xs, equity, alpha=0.12, color="#22d3ee", zorder=1)
+    if benchmarks:
+        for i, b in enumerate(benchmarks):
+            beq = b.get("equity")
+            lbl = str(b.get("label", f"Benchmark {i + 1}"))
+            if not isinstance(beq, list) or len(beq) != len(equity):
+                continue
+            c = _BENCH_COLORS[i % len(_BENCH_COLORS)]
+            ax.plot(xs, beq, color=c, linewidth=1.0, linestyle="--", alpha=0.95, label=lbl[:48], zorder=2)
     by_side = {"buy": "#4ade80", "sell": "#f87171", "trade": "#fbbf24"}
     for t in trades:
         i = int(t["index"])
@@ -134,7 +189,9 @@ def _render_png(dates: list[str], equity: list[float], trades: list[dict[str, An
             edgecolors="white",
             linewidths=0.4,
         )
-    ax.set_title("Equity curve")
+    ax.set_title("Equity vs benchmarks" if benchmarks else "Equity curve")
+    if benchmarks:
+        ax.legend(loc="upper left", fontsize=7, framealpha=0.88)
     if dates and all(d.isdigit() for d in dates[: min(len(dates), 5)]):
         ax.set_xlabel("Trading day index")
     else:
@@ -170,7 +227,12 @@ def write_equity_viz_for_workspace(ws: Workspace) -> bool:
         return False
 
     try:
-        png = _render_png(payload["dates"], payload["equity"], payload["trades"])
+        png = _render_png(
+            payload["dates"],
+            payload["equity"],
+            payload["trades"],
+            payload.get("benchmarks"),
+        )
     except Exception:  # noqa: BLE001
         png = b""
     # Save PNG first, then JSON, so manifest iteration order ends on ``equity_viz`` and

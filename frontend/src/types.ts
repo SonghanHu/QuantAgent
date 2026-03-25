@@ -33,18 +33,36 @@ export type EquityVizTrade = {
   label: string
 }
 
+export type EquityVizBenchmark = {
+  label: string
+  equity: number[]
+}
+
 export type EquityVizPayload = {
   version?: number
   dates: string[]
   equity: number[]
   trades: EquityVizTrade[]
+  /** Optional benchmark equity series (same length as equity), for chart overlay */
+  benchmarks?: EquityVizBenchmark[]
 }
 
 export function isEquityVizPayload(x: unknown): x is EquityVizPayload {
   if (!x || typeof x !== 'object') return false
   const o = x as Record<string, unknown>
   if (!Array.isArray(o.dates) || !Array.isArray(o.equity) || !Array.isArray(o.trades)) return false
-  return o.dates.length === o.equity.length && o.dates.length > 1
+  const n = o.dates.length
+  if (!(n === o.equity.length && n > 1)) return false
+  if (o.benchmarks !== undefined) {
+    if (!Array.isArray(o.benchmarks)) return false
+    for (const raw of o.benchmarks) {
+      if (!raw || typeof raw !== 'object') return false
+      const b = raw as Record<string, unknown>
+      if (typeof b.label !== 'string' || !Array.isArray(b.equity)) return false
+      if (b.equity.length !== n) return false
+    }
+  }
+  return true
 }
 
 export type ArtifactPreview =
