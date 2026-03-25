@@ -21,9 +21,10 @@ You do **not** need to pass `data_path` explicitly when the upstream `load_data`
 
 **Typical pipelines:**
 
-1. `web_search` (optional) → `run_data_loader` → `run_data_analyst` → `build_features` → `train_model` → `run_backtest` → `evaluate_strategy`
-2. For alpha research: `web_search` → `run_data_loader` → `run_data_analyst` → **`build_alphas`** → `train_model` → `run_backtest` → `evaluate_strategy`
-3. For single-shot analysis: `run_data_loader` or `load_data` → `run_data_analysis` → …
+1. ML / predictive workflow: `web_search` (optional) → `run_data_loader` → `run_data_analyst` → `build_features` → `train_model` → `run_backtest` → `evaluate_strategy`
+2. Rule-based workflow: `web_search` (optional) → `run_data_loader` → `run_data_analyst` → `build_features` → `run_backtest` → `evaluate_strategy`
+3. For alpha research: `web_search` → `run_data_loader` → `run_data_analyst` → **`build_alphas`** → `train_model` or direct `run_backtest` → `evaluate_strategy`
+4. For single-shot analysis: `run_data_loader` or `load_data` → `run_data_analysis` → …
 
 Skip steps only if the subtask clearly does not need them. Use `build_alphas` instead of `build_features` when the goal involves alpha research, formulaic alphas, or WorldQuant-style factors.
 
@@ -131,7 +132,7 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
 ## `train_model`
 
 - **What it does:** **scikit-learn** regression: Pipeline(imputer → scaler → estimator). You choose model, feature columns, and optional tuning.
-- **When to use:** Training / fitting / regression / hyperparameter tuning / cross-validation.
+- **When to use:** Training / fitting / regression / hyperparameter tuning / cross-validation. Usually **skip** this for rule-based strategies such as MACD, momentum ranking, fixed long-short rotations, or formulaic signals that already define positions directly.
 - **Arguments:**
   - `model_name`: `linear_regression`, `ridge`, `lasso`, `elasticnet`, `random_forest`, `gradient_boosting`, `svr` (aliases `lr`, `rf`, `gbm`, `gbr`, `enet`, …)
   - `feature_columns`: list or comma-separated string; **omit** to use all numeric columns except `target_column`
@@ -148,8 +149,11 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
 
 ## `run_backtest`
 
-- **What it does:** **Skill-driven backtest sub-agent.** Reads `engineered_data` (or `raw_data`) and `model_output` from workspace. **Pre-checks** that the data contains the target column and feature columns listed in `model_output`; returns `data_model_mismatch` error immediately if not (avoids waiting for a long script execution to fail). An LLM generates a complete backtest script from `skills/backtest.md`, respecting structured **hyperparameters** (strategy type, rebalance frequency, position sizing, transaction costs, etc.). The script re-trains the model on an in-sample window, generates out-of-sample predictions, converts to signals, and computes PnL / risk metrics. Saves `backtest_results` to workspace.
-- **When to use:** After `train_model`. Subtask mentions backtest, Sharpe, drawdown, turnover, PnL, equity curve, risk metrics.
+- **What it does:** **Skill-driven backtest sub-agent.** Reads `engineered_data` (or `raw_data`) and runs in one of two modes:
+  - **`model_based`**: uses `model_output`, validates target/features, re-trains/predicts, then converts predictions to positions.
+  - **`rule_based`**: uses prebuilt signal/weight/return columns and optional `feature_plan` context directly, without requiring `model_output`.
+  Saves `backtest_results` to workspace.
+- **When to use:** After `build_features` for rule-based strategies, or after `train_model` for predictive/ML strategies. Subtask mentions backtest, Sharpe, drawdown, turnover, PnL, equity curve, risk metrics.
 - **Arguments (hyperparameters):**
   - `strategy_type`: `"long_only"` (default) | `"long_short"` — whether the strategy can short
   - `rebalance_freq`: `"daily"` (default) | `"weekly"` | `"monthly"` — rebalance cadence
@@ -157,9 +161,9 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
   - `transaction_cost_bps`: float, default `5.0` — round-trip cost in basis points
   - `max_position_pct`: float 0–1, default `1.0` — max portfolio fraction per position
   - `initial_capital`: float, default `1000000`
-  - `train_ratio`: float 0.1–1.0, default `0.7` — in-sample fraction
+  - `train_ratio`: float 0.1–1.0, default `0.7` — in-sample fraction (used mainly in `model_based` mode)
   - `timeout_sec`: script execution timeout (default `180`)
-  - `workspace`: auto-injected; must contain `model_output` and data
+  - `workspace`: auto-injected; must contain data, and optionally `model_output`
 - **Returns:** `sharpe`, `max_drawdown`, `total_return`, `annual_return`, `win_rate`, `n_test_days`, plus script execution details. Saves `backtest_results` JSON to workspace.
 - **ReAct example:** *Thought: Need long-short daily backtest with 10bps costs.* → *Action: run_backtest* with `{ "strategy_type": "long_short", "transaction_cost_bps": 10, "train_ratio": 0.7 }`.
 

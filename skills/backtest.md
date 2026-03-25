@@ -5,7 +5,10 @@ Use when the agent must **simulate a trading strategy** on historical data and p
 ## Context you receive
 
 - Engineered (or raw) data with features and a target column.
-- Model training output: which model was used, feature columns, target column, train/test metrics.
+- Strategy context:
+  - `BACKTEST_MODE`: `"model_based"` or `"rule_based"`
+  - `MODEL_OUTPUT_JSON`: training output when in model-based mode
+  - `STRATEGY_CONTEXT_JSON`: feature plan, data columns, and other hints
 - **Backtest configuration** (structured hyperparameters — see below).
 
 ## Backtest configuration (injected as `BACKTEST_CONFIG_JSON`)
@@ -27,18 +30,26 @@ The planner decides these; you **must respect them exactly**:
 A **single Python script** that:
 
 1. Loads the dataset from `DATA_PATH` (pandas — `.parquet` or `.csv`).
-2. Splits data into **train** and **test** by time order (using `train_ratio`), ensuring **no look-ahead**.
-3. Trains the model specified in `MODEL_OUTPUT_JSON` (model type + feature columns + target) on the train set using scikit-learn.
-4. Generates **predictions** on the test set.
-5. Converts predictions into **signals**:
-   - `long_only`: signal = clipped prediction (≥ 0)
-   - `long_short`: signal = raw prediction (positive = long, negative = short)
-6. Applies **position sizing** per `position_sizing`:
+2. Branches on `BACKTEST_MODE`:
+   - **`model_based`**:
+     - Split data into **train** and **test** by time order (using `train_ratio`), ensuring **no look-ahead**.
+     - Train the model specified in `MODEL_OUTPUT_JSON` (model type + feature columns + target) on the train set using scikit-learn.
+     - Generate **predictions** on the test set.
+     - Convert predictions into signals.
+   - **`rule_based`**:
+     - Do **not** train a model.
+     - Use prebuilt rule columns from the data directly. Prefer, in order:
+       1. weight columns such as `w_*`, `weight*`, `position*`
+       2. signal / score columns such as `signal*`, `score*`, `alpha*`, `mom*`
+       3. feature-plan hints from `STRATEGY_CONTEXT_JSON` to identify the intended rule columns
+     - If explicit weights are missing but signals exist, convert them into positions using `strategy_type` and `position_sizing`.
+     - If the data already contains strategy return columns (e.g. `strategy_ret`, `strategy_ret_net`), you may use them directly and still compute metrics/turnover defensively.
+3. Applies **position sizing** per `position_sizing` when positions must be derived:
    - `equal_weight`: sign of signal only (fixed size)
    - `signal_proportional`: normalize signals so abs sum = 1, clip by `max_position_pct`
    - `volatility_scaled`: scale by inverse rolling volatility of returns
-7. Computes **daily strategy returns** = position(t-1) × actual_return(t) − transaction_costs.
-8. Computes metrics and writes them to `OUTPUT_JSON`:
+4. Computes **daily strategy returns** = position(t-1) × actual_return(t) − transaction_costs.
+5. Computes metrics and writes them to `OUTPUT_JSON`:
 
 ```json
 {
@@ -59,20 +70,21 @@ A **single Python script** that:
 }
 ```
 
-9. Optionally saves an equity curve plot to `RUN_DIR / "equity.png"` (matplotlib, `savefig` only, never `show()`).
-10. Prints a short human-readable recap to stdout (≤ 40 lines).
+6. Optionally saves an equity curve plot to `RUN_DIR / "equity.png"` (matplotlib, `savefig` only, never `show()`).
+7. Prints a short human-readable recap to stdout (≤ 40 lines).
 
 ## Rules
 
 - **No look-ahead:** train only on data before test period; rolling features must use only past data.
 - **Annualize:** Sharpe = mean(daily_returns) / std(daily_returns) × sqrt(252). Adjust if `rebalance_freq` != daily.
 - **Transaction costs:** compute turnover as sum of abs position changes; cost = turnover × `transaction_cost_bps` / 10000.
+- In `rule_based` mode, prefer using columns already produced by feature engineering rather than recreating the strategy from scratch.
 - **No network, no subprocess.** Only `DATA_PATH`, `OUTPUT_JSON`, `RUN_DIR`.
 - Be defensive: if the model fails to train or data is insufficient, write an error entry to `OUTPUT_JSON`.
 
 ## Allowed imports
 
-`pandas`, `numpy`, `json`, `pathlib`, `sys`, `warnings`, `sklearn` (for model re-fitting), `matplotlib` (for saving charts only).
+`pandas`, `numpy`, `json`, `pathlib`, `sys`, `warnings`, `sklearn` (only for `model_based` re-fitting), `matplotlib` (for saving charts only).
 
 ## Injected variables (do not redefine)
 
@@ -80,4 +92,6 @@ A **single Python script** that:
 - `OUTPUT_JSON: pathlib.Path` — where to write results
 - `RUN_DIR: pathlib.Path` — directory for charts and artifacts
 - `BACKTEST_CONFIG_JSON: str` — serialized backtest hyperparameters
-- `MODEL_OUTPUT_JSON: str` — serialized model training output (model name, features, target, metrics)
+- `BACKTEST_MODE: str` — `"model_based"` or `"rule_based"`
+- `STRATEGY_CONTEXT_JSON: str` — serialized strategy context (feature plan, data columns, hints)
+- `MODEL_OUTPUT_JSON: str` — serialized model training output (present mainly for `model_based`)

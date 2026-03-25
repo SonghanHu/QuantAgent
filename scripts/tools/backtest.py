@@ -25,8 +25,10 @@ def run_backtest(
     """
     Run a skill-driven backtest on workspace data.
 
-    Reads ``engineered_data`` (or ``raw_data``) and ``model_output`` from workspace,
-    generates a backtest script via ``skills/backtest.md``, executes it, and saves
+    Reads ``engineered_data`` (or ``raw_data``) from workspace. If ``model_output``
+    exists it runs in model-based mode; otherwise it falls back to rule-based mode
+    using engineered signals / weights / returns plus optional feature-plan context.
+    Generates a backtest script via ``skills/backtest.md``, executes it, and saves
     ``backtest_results`` back to the workspace.
 
     The hyperparameters (``strategy_type``, ``rebalance_freq``, etc.) constrain the
@@ -34,9 +36,6 @@ def run_backtest(
     """
     if workspace is None:
         return {"error": "no_workspace", "message": "run_backtest requires a workspace."}
-
-    if not workspace.has("model_output"):
-        return {"error": "no_model_output", "message": "No model_output in workspace. Run train_model first."}
 
     has_engineered = workspace.has("engineered_data")
     has_raw = workspace.has("raw_data")
@@ -47,30 +46,33 @@ def run_backtest(
         workspace.df_path("engineered_data") if has_engineered else workspace.df_path("raw_data")
     )
 
-    model_output = workspace.load_json("model_output")
+    model_output = workspace.load_json("model_output") if workspace.has("model_output") else None
+    feature_plan = workspace.load_json("feature_plan") if workspace.has("feature_plan") else None
 
     import pandas as pd
 
     data_df = pd.read_parquet(data_path)
-    target_col = str(model_output.get("target_column", "target"))
-    feature_cols = model_output.get("feature_columns", [])
-    missing_target = target_col not in data_df.columns
-    missing_feats = [c for c in feature_cols if c not in data_df.columns]
-    if missing_target or missing_feats:
-        parts = []
-        if missing_target:
-            parts.append(f"target '{target_col}' missing")
-        if missing_feats:
-            parts.append(f"features missing: {missing_feats[:10]}")
-        return {
-            "error": "data_model_mismatch",
-            "message": (
-                f"Backtest data ({data_path}) does not match model_output: "
-                + "; ".join(parts)
-                + f". Data columns: {list(data_df.columns)[:15]}. "
-                "Re-run build_features to produce an engineered_data with target + features."
-            ),
-        }
+    backtest_mode = "model_based" if model_output else "rule_based"
+    if model_output is not None:
+        target_col = str(model_output.get("target_column", "target"))
+        feature_cols = model_output.get("feature_columns", [])
+        missing_target = target_col not in data_df.columns
+        missing_feats = [c for c in feature_cols if c not in data_df.columns]
+        if missing_target or missing_feats:
+            parts = []
+            if missing_target:
+                parts.append(f"target '{target_col}' missing")
+            if missing_feats:
+                parts.append(f"features missing: {missing_feats[:10]}")
+            return {
+                "error": "data_model_mismatch",
+                "message": (
+                    f"Backtest data ({data_path}) does not match model_output: "
+                    + "; ".join(parts)
+                    + f". Data columns: {list(data_df.columns)[:15]}. "
+                    "Re-run build_features to produce an engineered_data with target + features."
+                ),
+            }
 
     raw_config = {
         "strategy_type": strategy_type,
@@ -92,9 +94,19 @@ def run_backtest(
         backtest_config = BacktestConfig().model_dump()
         config_validation_fallback = True
 
+    strategy_context = {
+        "backtest_mode": backtest_mode,
+        "model_output": model_output or {},
+        "feature_plan": feature_plan or {},
+        "data_columns": list(data_df.columns)[:200],
+        "data_path": data_path,
+        "has_engineered_data": has_engineered,
+        "has_model_output": model_output is not None,
+    }
+
     result = execute_backtest_skill(
         backtest_config,
-        model_output,
+        strategy_context,
         data_path=data_path,
         timeout_sec=timeout_sec,
     )
@@ -113,6 +125,7 @@ def run_backtest(
                 result[key] = summary[key]
 
     result["backtest_config"] = backtest_config
+    result["backtest_mode"] = backtest_mode
     if config_validation_fallback:
         result["config_validation_fallback"] = True
     return result

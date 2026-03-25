@@ -79,7 +79,7 @@ def evaluate_strategy(
         return {
             "verdict": "incomplete",
             "summary": "No backtest or model output available for evaluation.",
-            "next_steps": ["Run train_model and run_backtest first."],
+            "next_steps": ["Run run_backtest first, and add train_model only if the strategy is predictive/ML-based."],
         }
 
     context_parts: list[str] = []
@@ -107,10 +107,12 @@ def evaluate_strategy(
 
     system = (
         "You are a senior quant researcher evaluating a trading strategy. "
-        "Given model training metrics and backtest results, produce a structured verdict. "
+        "Given backtest results and optional model training metrics, produce a structured verdict. "
         "Be specific and actionable. Reference actual numbers from the results. "
         "Consider: Sharpe ratio quality (>1 good, >2 excellent), drawdown severity, "
-        "overfitting risk (train vs test R²), turnover/cost impact, and regime robustness."
+        "turnover/cost impact, and regime robustness. "
+        "If model training metrics are present, also consider overfitting risk (train vs test R²). "
+        "If no model output is present, treat this as a rule-based strategy review rather than an incomplete run."
     )
     user = "\n\n".join(context_parts) + workspace_summary
 

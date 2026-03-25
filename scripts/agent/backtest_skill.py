@@ -2,7 +2,7 @@
 Skill-driven backtesting: LLM writes a backtest script from ``skills/backtest.md``.
 
 Reuses the same safety/execution pattern as ``analysis_skill`` / ``feature_skill``
-but injects ``BACKTEST_CONFIG_JSON`` and ``MODEL_OUTPUT_JSON`` for strategy configuration.
+but injects ``BACKTEST_CONFIG_JSON`` plus model/rule strategy context.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def _openai_client() -> OpenAI:
 
 def execute_backtest_skill(
     backtest_config: dict[str, Any],
-    model_output: dict[str, Any],
+    strategy_context: dict[str, Any],
     *,
     data_path: str,
     model: str | None = None,
@@ -72,8 +72,8 @@ def execute_backtest_skill(
     """
     Generate and run a backtest script using the ``backtest`` skill.
 
-    ``backtest_config`` holds strategy hyperparameters; ``model_output`` holds
-    training results (model name, feature columns, target, metrics).
+    ``backtest_config`` holds strategy hyperparameters; ``strategy_context`` tells
+    the script whether to run in model-based or rule-based mode.
     """
     load_dotenv()
     m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
@@ -91,7 +91,9 @@ def execute_backtest_skill(
     script_path = run_dir / "backtest.py"
 
     config_str = json.dumps(backtest_config, ensure_ascii=False, indent=2, default=str)
-    model_str = json.dumps(model_output, ensure_ascii=False, indent=2, default=str)
+    context_str = json.dumps(strategy_context, ensure_ascii=False, indent=2, default=str)
+    backtest_mode = str(strategy_context.get("backtest_mode", "model_based"))
+    model_str = json.dumps(strategy_context.get("model_output") or {}, ensure_ascii=False, indent=2, default=str)
 
     preamble = f'''# -*- injected: do not edit names -*-
 from pathlib import Path
@@ -100,6 +102,8 @@ DATA_PATH = {repr(data_path)}
 OUTPUT_JSON = Path({repr(str(output_json))})
 RUN_DIR = Path({repr(str(run_dir))})
 BACKTEST_CONFIG_JSON = {repr(config_str)}
+BACKTEST_MODE = {repr(backtest_mode)}
+STRATEGY_CONTEXT_JSON = {repr(context_str)}
 MODEL_OUTPUT_JSON = {repr(model_str)}
 '''
 
@@ -107,12 +111,12 @@ MODEL_OUTPUT_JSON = {repr(model_str)}
         "You output structured JSON with a single field `script` — executable Python code only. "
         "Follow the skill specification exactly. Use only allowed imports. "
         "The preamble defining DATA_PATH, OUTPUT_JSON, RUN_DIR, BACKTEST_CONFIG_JSON, "
-        "MODEL_OUTPUT_JSON will be prepended for you."
+        "BACKTEST_MODE, STRATEGY_CONTEXT_JSON, MODEL_OUTPUT_JSON will be prepended for you."
     )
     user = (
         f"## Skill\n\n{skill}\n\n"
         f"## Backtest configuration\n\n{config_str}\n\n"
-        f"## Model training output\n\n{model_str}\n\n"
+        f"## Strategy context\n\n{context_str}\n\n"
         f"## Data file\n\n{data_path}\n"
     )
 

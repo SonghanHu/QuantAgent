@@ -30,6 +30,22 @@ class StepThink(BaseModel):
     )
 
 
+def _failure_context(record: ExecutionRecord, workspace_artifacts: dict[str, Any]) -> str:
+    summary = (record.result_summary or "").lower()
+    if record.status != "error":
+        return "success_or_nonblocking"
+    if "indentationerror" in summary or "syntaxerror" in summary:
+        return "codegen_syntax"
+    if "no_raw_data" in summary or "empty_frame" in summary or "missing" in summary:
+        if "raw_data" not in workspace_artifacts:
+            return "missing_data_artifact"
+    if "no_feature_plan" in summary or "empty_feature_plan" in summary:
+        return "missing_feature_plan"
+    if "no_model_output" in summary:
+        return "missing_model_output"
+    return "runtime_or_schema"
+
+
 def _client() -> OpenAI:
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
@@ -62,6 +78,10 @@ def think_after_subtask(
     allowed_set = set(allowed_tools)
     tools_line = ", ".join(sorted(allowed_tools))
     has_debug_notes = "debug_notes" in workspace_artifacts
+    failure_context = _failure_context(record, workspace_artifacts)
+    has_engineered = "engineered_data" in workspace_artifacts
+    has_backtest = "backtest_results" in workspace_artifacts
+    has_model = "model_output" in workspace_artifacts
 
     next_block = "None (pipeline end or no further subtasks in plan)."
     if next_subtask is not None:
@@ -81,6 +101,7 @@ def think_after_subtask(
         f"## Overall goal\n{goal[:3000]}\n\n"
         f"## Workspace artifacts (names + kinds)\n{json.dumps(workspace_artifacts, ensure_ascii=False)[:2000]}\n\n"
         f"## Debug already available\n{'yes' if has_debug_notes else 'no'}\n\n"
+        f"## Failure context\n{failure_context}\n\n"
         f"## Completed subtask\nid={completed.id}\n{completed.title}\n{completed.description}\n\n"
         f"## Tool used: {record.tool_name}\nstatus: {record.status}\n"
         f"summary: {out_summary}\n\n"
@@ -101,6 +122,11 @@ def think_after_subtask(
         "- If `debug_notes` already exists in the workspace, do NOT suggest `run_debug_agent` again unless the "
         "next planned subtask is explicitly debugging. Prefer the fix/retry step instead.\n"
         "- Prefer the immediate unblock for the next planned subtask over distant downstream tools.\n\n"
+        "Heuristics:\n"
+        "- If the failure context is `codegen_syntax`, prioritize retrying/fixing the same generation step rather than downstream tools.\n"
+        "- If required artifacts are missing, recommend the nearest upstream producer first.\n"
+        "- Do not recommend `evaluate_strategy` unless backtest or model artifacts already exist.\n"
+        "- Do not recommend `run_backtest` unless engineered features/signals exist or the next subtask is explicitly backtest.\n\n"
         f"Allowed tool names: {tools_line}."
     )
 
@@ -126,6 +152,15 @@ def think_after_subtask(
         filtered = [x for x in t.tools_to_consider if x in allowed_set]
         if has_debug_notes and next_subtask is not None and "debug" not in next_subtask.title.lower():
             filtered = [x for x in filtered if x != "run_debug_agent"]
+        if not has_backtest and not has_model:
+            filtered = [x for x in filtered if x != "evaluate_strategy"]
+        if not has_engineered and (next_subtask is None or "backtest" not in next_subtask.title.lower()):
+            filtered = [x for x in filtered if x != "run_backtest"]
+        if not has_engineered:
+            filtered = [x for x in filtered if x != "train_model"]
+        if failure_context == "codegen_syntax" and record.tool_name in allowed_set:
+            filtered = [x for x in filtered if x != record.tool_name]
+            filtered = [record.tool_name, *filtered]
         return {
             "reasoning": t.reasoning.strip(),
             "tools_to_consider": filtered,

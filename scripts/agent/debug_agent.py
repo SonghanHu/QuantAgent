@@ -18,6 +18,19 @@ from .state import ExecutionRecord
 from .workspace import Workspace
 
 
+class RecoveryStep(BaseModel):
+    """A lightweight, machine-executable recovery action."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: str = Field(description="Registry tool name to run for recovery.")
+    kwargs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Tool kwargs only; runtime fields like workspace are injected by the workflow.",
+    )
+    reason: str = Field(default="", description="Why this recovery step helps.")
+
+
 class DebugAnalysis(BaseModel):
     """Structured output from the debug model."""
 
@@ -35,6 +48,22 @@ class DebugAnalysis(BaseModel):
     next_steps: str = Field(
         default="",
         description="What to run or change next (e.g. re-run build_features).",
+    )
+    should_retry_upstream: bool = Field(
+        default=False,
+        description="True when a lightweight recovery sequence should run before retrying the failed subtask.",
+    )
+    recovery_steps: list[RecoveryStep] = Field(
+        default_factory=list,
+        description="Small ordered tool sequence to repair missing prerequisites before retrying.",
+    )
+    retry_failed_subtask: bool = Field(
+        default=True,
+        description="Whether the workflow should retry the failed subtask once after recovery.",
+    )
+    resume_from_subtask_id: int | None = Field(
+        default=None,
+        description="If set, indicates which subtask should be retried after recovery (usually the failed one).",
     )
 
 
@@ -119,7 +148,13 @@ def run_debug_analysis(
         "Given the goal, workspace artifact list, and any tool error output, "
         "produce a concise diagnosis. Prefer concrete causes (e.g. pandas index alignment, "
         "missing parquet column, subprocess exit code). "
-        "Do not invent files that are not mentioned; if uncertain, say so in root_cause."
+        "Do not invent files that are not mentioned; if uncertain, say so in root_cause.\n\n"
+        "When useful, propose a SMALL recovery sequence using these tool names only: "
+        "`web_search`, `run_data_loader`, `load_data`, `run_data_analyst`, `run_data_analysis`, `build_features`.\n"
+        "Use `should_retry_upstream=true` only when upstream data/context is actually missing and a short tool sequence "
+        "could repair it within the current run. Prefer 1-3 recovery steps. "
+        "If the failure is just local code generation / syntax and existing artifacts are sufficient, leave "
+        "`should_retry_upstream=false` and let the failed subtask be retried directly or fixed in place."
     )
 
     try:
