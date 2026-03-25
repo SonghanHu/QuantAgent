@@ -36,7 +36,7 @@ def run_backtest(
     strategy_type: str = "long_only",
     rebalance_freq: str | None = None,
     position_sizing: str = "signal_proportional",
-    transaction_cost_bps: float = 5.0,
+    transaction_cost_bps: float = 0.0,
     max_position_pct: float = 1.0,
     initial_capital: float = 1_000_000.0,
     train_ratio: float | None = None,
@@ -54,6 +54,8 @@ def run_backtest(
 
     The hyperparameters (``strategy_type``, ``rebalance_freq``, etc.) constrain the
     generated script; the LLM adapts the actual trading logic to the data.
+    Default ``transaction_cost_bps`` is ``0``; pass a positive value only when the user
+    explicitly requested transaction costs.
 
     ``rebalance_freq``: if omitted (``None``), the tool may infer ``weekly`` / ``monthly`` from
     ``feature_plan`` (e.g. W-FRI / 周频). Otherwise defaults to ``daily``.
