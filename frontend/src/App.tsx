@@ -9,6 +9,7 @@ import { ReportPanel } from './components/ReportPanel'
 import { WorkflowGraph } from './components/WorkflowGraph'
 import { useAgentSocket } from './hooks/useAgentSocket'
 import type { AgentEvent, ArtifactPreview, WorkspaceManifest } from './types'
+import { computePipelineProgress } from './utils/pipelineProgress'
 
 const defaultGoal =
   'Download 1 year of SPY daily data, search for relevant alpha factors, engineer features, train a ridge model, backtest, and evaluate the result.'
@@ -39,14 +40,7 @@ function App() {
   const { events, connectionStatus } = useAgentSocket(runId)
   const latestEvent = events.at(-1) ?? null
 
-  const decomposeEvent = useMemo(
-    () => events.find((event) => event.type === 'decompose_done') ?? null,
-    [events],
-  )
-  const subtaskDoneEvents = useMemo(
-    () => events.filter((event) => event.type === 'subtask_done'),
-    [events],
-  )
+  const pipelineProgress = useMemo(() => computePipelineProgress(events as AgentEvent[]), [events])
   const currentSubtaskEvent = useMemo(
     () => [...events].reverse().find((event) => event.type === 'subtask_start') ?? null,
     [events],
@@ -56,9 +50,12 @@ function App() {
     [events],
   )
   const isRunning = Boolean(runId) && finalEvent === null
-  const totalSubtasks =
-    typeof decomposeEvent?.total_subtasks === 'number' ? (decomposeEvent.total_subtasks as number) : 0
-  const completedSubtasks = subtaskDoneEvents.length
+  const totalSubtasks = pipelineProgress.total
+  const completedSubtasks = pipelineProgress.completed
+  const progressPhaseHint =
+    pipelineProgress.replanRound > 0
+      ? `当前为第 ${pipelineProgress.replanRound} 次重规划后的执行段；进度仅统计本段内子任务（重试合并为一步）。`
+      : undefined
   const currentStep =
     typeof currentSubtaskEvent?.subtask_title === 'string'
       ? (currentSubtaskEvent.subtask_title as string)
@@ -241,6 +238,7 @@ function App() {
           total={totalSubtasks}
           currentStep={currentStep}
           connectionStatus={connectionStatus}
+          phaseHint={progressPhaseHint}
         />
 
         {/* Main tabbed shell: each tab gets full width — no artifact vs log squeeze */}

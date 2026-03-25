@@ -3,10 +3,14 @@ type ProgressBarProps = {
   total: number
   currentStep: string
   connectionStatus: string
+  /** e.g. replan round — explains why counts reset vs initial decomposition */
+  phaseHint?: string
 }
 
-export function ProgressBar({ completed, total, currentStep, connectionStatus }: ProgressBarProps) {
-  const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+export function ProgressBar({ completed, total, currentStep, connectionStatus, phaseHint }: ProgressBarProps) {
+  const safeTotal = total > 0 ? total : 0
+  const safeDone = safeTotal > 0 ? Math.min(completed, safeTotal) : completed
+  const percent = safeTotal > 0 ? Math.min(100, Math.round((safeDone / safeTotal) * 100)) : 0
   const connectionLabel =
     connectionStatus === 'open'
       ? 'Streaming'
@@ -21,9 +25,10 @@ export function ProgressBar({ completed, total, currentStep, connectionStatus }:
   return (
     <section className="rounded-3xl border border-white/10 bg-white/5 p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold text-white">Progress</h2>
           <p className="text-base text-slate-300">{currentStep || 'Waiting for run to start'}</p>
+          {phaseHint ? <p className="mt-1 text-xs text-slate-500">{phaseHint}</p> : null}
         </div>
         <div className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-300">
           {connectionLabel}
@@ -37,7 +42,7 @@ export function ProgressBar({ completed, total, currentStep, connectionStatus }:
       </div>
       <div className="mt-3 flex items-center justify-between text-base text-slate-300">
         <span>
-          {completed} / {total || '?'} subtasks
+          {safeDone} / {safeTotal || '?'} subtasks
         </span>
         <span>{percent}%</span>
       </div>

@@ -178,7 +178,9 @@ def run_data_loader(
 
         propose_system = (
             "You output a YFinanceFetchSpec: Yahoo symbols, period or start/end, interval, rationale. "
-            "Align the download with the research goal. No prose outside the structured object."
+            "Align the download with the research goal. No prose outside the structured object.\n"
+            "If the user (or a prior judge) requires a **fixed calendar window**, set `start` and `end` "
+            "(YYYY-MM-DD) and set `period` to null — do not use a `period` shortcut for that case."
         )
         propose_user_parts = [f"## Goal\n\n{goal.strip()}"]
         if search_extra.strip():
@@ -245,7 +247,9 @@ def run_data_loader(
             "You review whether the latest Yahoo Finance download is adequate for the research goal. "
             "Output a structured decision only.\n"
             "- ready=true: required assets and history exist with usable OHLCV (and Adj Close / Volume when needed) "
-            "— use the JSON field `column_coverage` for per-column non-null counts (not only `price_columns`).\n"
+            "— use the JSON field `column_coverage` for per-column non-null counts (not only `price_columns`). "
+            "If `start`/`end` appear in the spec or load summary with the intended span, treat the range as satisfied "
+            "even when `period` is null; do **not** fail solely because `period` is absent.\n"
             "- ready=false: say what is wrong and set next_focus so the next download can fix it.\n"
         )
         if is_final:

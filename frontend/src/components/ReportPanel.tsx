@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { PostRunChat } from './PostRunChat'
 import type { AgentEvent } from '../types'
+import { computePipelineProgress } from '../utils/pipelineProgress'
 
 type ReportPanelProps = {
   events: AgentEvent[]
@@ -49,6 +50,7 @@ function extractMetrics(events: AgentEvent[]): RunMetrics | null {
 
   const decompose = events.find((e) => e.type === 'decompose_done')
   const subtaskDone = events.filter((e) => e.type === 'subtask_done')
+  const progress = computePipelineProgress(events)
   const workspaceUpdates = events.filter((e) => e.type === 'workspace_update')
   const isGeneratingReport = events.some((e) => e.type === 'report_generating') && !runDone
 
@@ -106,9 +108,9 @@ function extractMetrics(events: AgentEvent[]): RunMetrics | null {
     status: (runDone?.status as string) ?? 'running',
     goal: String(runStart.goal ?? ''),
     goalSummary: String(decompose?.goal_summary ?? ''),
-    totalSubtasks: (decompose?.total_subtasks as number) ?? 0,
-    completedSubtasks: subtaskDone.filter((e) => e.status === 'ok').length,
-    failedSubtasks: subtaskDone.filter((e) => e.status !== 'ok').length,
+    totalSubtasks: progress.total || ((decompose?.total_subtasks as number) ?? 0),
+    completedSubtasks: progress.completed,
+    failedSubtasks: [...progress.terminalBySubtask.values()].filter((s) => s === 'error').length,
     toolBreakdown,
     artifacts: workspaceUpdates.map((e) => e.artifact_name as string).filter(Boolean),
     modelMetrics,

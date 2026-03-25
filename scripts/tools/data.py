@@ -190,7 +190,7 @@ def _fetch_yfinance(spec: YFinanceFetchSpec) -> tuple[pd.DataFrame | None, dict[
 
 def load_data(
     tickers: list[str] | str | None = None,
-    period: str | None = "1y",
+    period: str | None = None,
     start: str | None = None,
     end: str | None = None,
     interval: str = "1d",
@@ -207,6 +207,10 @@ def load_data(
 
     When *workspace* is provided the DataFrame is persisted as ``raw_data.parquet``
     so downstream tools can access it via ``workspace.load_df("raw_data")``.
+
+    **Date range:** If ``start`` or ``end`` is set, ``period`` is ignored and cleared in
+    returned metadata (so judges see an explicit range, not a stale default ``1y``).
+    If neither ``start``/``end`` nor ``period`` is given, defaults to ``period="1y"``.
     """
     if dataset == "demo" and not tickers:
         _, meta = _stub("demo")
@@ -217,6 +221,13 @@ def load_data(
     if isinstance(tickers, str) and not tickers.strip():
         _, meta = _stub(dataset or "demo")
         return meta
+
+    # Avoid inheriting a default period when the caller passes only start/end (e.g. data_loader
+    # uses model_dump(exclude_none=True) so period is omitted — must not become "1y" in metadata).
+    if start or end:
+        period = None
+    elif period is None:
+        period = "1y"
 
     spec_in = YFinanceFetchSpec(
         tickers=tickers,

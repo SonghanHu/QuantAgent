@@ -160,7 +160,7 @@ function derivePipeline(events: AgentEvent[]): { nodes: PipelineNode[]; topoOrde
     }
   }
 
-  const topoEvent = events.find((e) => e.type === 'workflow_topo_order')
+  const topoEvent = [...events].reverse().find((e) => e.type === 'workflow_topo_order')
   const topoOrder = (topoEvent?.order as number[]) ?? subtasks.map((s) => s.id)
 
   return { nodes: Array.from(nodeMap.values()), topoOrder }
