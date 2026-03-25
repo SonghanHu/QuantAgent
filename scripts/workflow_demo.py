@@ -59,6 +59,7 @@ def _subtask_primary_tool(st: Subtask) -> str | None:
         "evaluate_strategy",
         "run_debug_agent",
         "web_search",
+        "fetch_sp500_tickers",
         "load_data",
     ):
         if name in text:
@@ -99,6 +100,10 @@ def repair_plan_dependencies(plan: TaskBreakdown) -> TaskBreakdown:
                 for sid in by_tool.get(key, []):
                     if sid != s.id:
                         deps.add(sid)
+        elif tool in ("run_data_loader", "load_data"):
+            for sid in by_tool.get("fetch_sp500_tickers", []):
+                if sid != s.id:
+                    deps.add(sid)
         new_subs.append(s.model_copy(update={"dependencies": sorted(deps)}))
     return plan.model_copy(update={"subtasks": new_subs})
 

@@ -48,6 +48,20 @@ def subtask_to_tool_name(subtask: Subtask) -> str:
     if any(
         k in t
         for k in (
+            "fetch_sp500_tickers",
+            "sp500",
+            "s&p 500",
+            "s and p 500",
+            "s&p500",
+            "s&p 500 constituents",
+            "s&p500 constituents",
+            "index constituents",
+        )
+    ):
+        return "fetch_sp500_tickers"
+    if any(
+        k in t
+        for k in (
             "backtest",
             "sharpe",
             "drawdown",

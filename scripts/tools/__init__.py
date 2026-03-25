@@ -21,6 +21,7 @@ from .evaluation import evaluate_strategy
 from .features import build_features
 from .regressor import train_model
 from .search import web_search
+from .sp500 import fetch_sp500_tickers_tool
 
 ToolFn = Callable[..., dict[str, Any]]
 
@@ -28,6 +29,7 @@ TOOL_REGISTRY: dict[str, ToolFn] = {
     "load_data": load_data,
     "run_data_loader": run_data_loader,
     "web_search": web_search,
+    "fetch_sp500_tickers": fetch_sp500_tickers_tool,
     "run_data_analysis": run_data_analysis,
     "run_data_analyst": run_data_analyst,
     "build_features": build_features,

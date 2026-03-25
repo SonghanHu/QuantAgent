@@ -120,6 +120,7 @@ def run_subtask(
                 "stopped_reason",
                 "workspace_artifact",
                 "error",
+                "n",
             )
         ]
         summary = ", ".join(summary_bits) if summary_bits else "ok"

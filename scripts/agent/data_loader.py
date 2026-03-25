@@ -65,6 +65,48 @@ def _search_context_snippet(load_json: Callable[[str], Any], max_chars: int = 35
         return ""
 
 
+def _load_sp500_tickers(load_json: Callable[[str], Any]) -> list[str]:
+    """Return the full S&P 500 ticker list from workspace, or empty if unavailable."""
+    try:
+        data = load_json("sp500_tickers")
+        tickers = data.get("tickers")
+        if isinstance(tickers, list) and tickers:
+            return [str(t).strip() for t in tickers if str(t).strip()]
+    except Exception:  # noqa: BLE001
+        pass
+    return []
+
+
+def _sp500_tickers_snippet(load_json: Callable[[str], Any], max_chars: int = 14_000) -> str:
+    """Inject workspace S&P list so the proposer can set YFinanceFetchSpec.tickers (batched if needed)."""
+    tickers = _load_sp500_tickers(load_json)
+    if not tickers:
+        return ""
+    payload = {
+        "n": len(tickers),
+        "tickers": tickers,
+        "hint": (
+            "Symbols are Yahoo-style (dots→hyphens). yfinance may be slow or rate-limited for hundreds of tickers; "
+            "you may use a representative subset or multiple smaller batches across rounds if the goal allows."
+        ),
+    }
+    s = json.dumps(payload, ensure_ascii=False)
+    return s[:max_chars] + ("\n\n[truncated]" if len(s) > max_chars else "")
+
+
+def _goal_implies_sp500(goal: str) -> bool:
+    """Heuristic: does the goal text mention S&P 500 universe?"""
+    import re as _re
+
+    return bool(
+        _re.search(
+            r"s[&\s]*p\s*500|标普\s*500|sp500|s&p\s*500|index\s+constituents|全部成分股",
+            goal,
+            _re.IGNORECASE,
+        )
+    )
+
+
 def _compact_load_meta(meta: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "source",
@@ -170,49 +212,83 @@ def run_data_loader(
     if workspace is not None and workspace.has("search_context"):
         search_extra = _search_context_snippet(workspace.load_json)
 
+    sp500_tickers: list[str] = []
+    sp500_extra = ""
+    if workspace is not None and workspace.has("sp500_tickers"):
+        sp500_tickers = _load_sp500_tickers(workspace.load_json)
+        sp500_extra = _sp500_tickers_snippet(workspace.load_json)
+
+    use_sp500_shortcut = bool(sp500_tickers) and _goal_implies_sp500(goal)
+
     hint = ""
 
     for round_num in range(1, max_rounds + 1):
         is_final = round_num == max_rounds
         history = _history_digest(result.rounds)
 
-        propose_system = (
-            "You output a YFinanceFetchSpec: Yahoo symbols, period or start/end, interval, rationale. "
-            "Align the download with the research goal. No prose outside the structured object.\n"
-            "If the user (or a prior judge) requires a **fixed calendar window**, set `start` and `end` "
-            "(YYYY-MM-DD) and set `period` to null — do not use a `period` shortcut for that case."
-        )
-        propose_user_parts = [f"## Goal\n\n{goal.strip()}"]
-        if search_extra.strip():
-            propose_user_parts.append(f"## Prior web search (optional)\n\n{search_extra}")
-        if history.strip():
-            propose_user_parts.append(f"## Previous attempts\n\n{history}")
-        if hint.strip():
-            propose_user_parts.append(f"## Judge hint for this round\n\n{hint.strip()}")
-        propose_user = "\n\n".join(propose_user_parts)
-
-        if event_callback is not None:
-            event_callback(
-                {
-                    "type": "data_loader_round",
-                    "stage": "spec_propose",
-                    "round": round_num,
-                }
+        if use_sp500_shortcut and round_num == 1:
+            spec = YFinanceFetchSpec(
+                tickers=list(sp500_tickers),
+                period="10y",
+                interval="1d",
+                auto_adjust=True,
+                rationale="S&P 500 full constituents from workspace sp500_tickers artifact; 10y daily.",
             )
+            if event_callback is not None:
+                event_callback(
+                    {
+                        "type": "data_loader_round",
+                        "stage": "spec_propose",
+                        "round": round_num,
+                        "sp500_shortcut": True,
+                        "n_tickers": len(sp500_tickers),
+                    }
+                )
+        else:
+            propose_system = (
+                "You output a YFinanceFetchSpec: Yahoo symbols, period or start/end, interval, rationale. "
+                "Align the download with the research goal. No prose outside the structured object.\n"
+                "If the user (or a prior judge) requires a **fixed calendar window**, set `start` and `end` "
+                "(YYYY-MM-DD) and set `period` to null — do not use a `period` shortcut for that case."
+            )
+            propose_user_parts = [f"## Goal\n\n{goal.strip()}"]
+            if search_extra.strip():
+                propose_user_parts.append(f"## Prior web search (optional)\n\n{search_extra}")
+            if sp500_extra.strip():
+                propose_user_parts.append(
+                    "## S&P 500 constituents (from workspace `fetch_sp500_tickers`)\n\n"
+                    "Use this **complete** list as tickers for YFinanceFetchSpec when the goal is S&P 500 universe. "
+                    "Do NOT drop tickers unless the prior judge explicitly said to reduce the set.\n\n"
+                    f"{sp500_extra}"
+                )
+            if history.strip():
+                propose_user_parts.append(f"## Previous attempts\n\n{history}")
+            if hint.strip():
+                propose_user_parts.append(f"## Judge hint for this round\n\n{hint.strip()}")
+            propose_user = "\n\n".join(propose_user_parts)
 
-        spec_resp = cli.chat.completions.parse(
-            model=m,
-            messages=[
-                {"role": "system", "content": propose_system},
-                {"role": "user", "content": propose_user},
-            ],
-            response_format=YFinanceFetchSpec,
-        )
-        spec_parsed = spec_resp.choices[0].message.parsed
-        if spec_parsed is None:
-            result.stopped_reason = "error"
-            return result
-        spec = cast(YFinanceFetchSpec, spec_parsed)
+            if event_callback is not None:
+                event_callback(
+                    {
+                        "type": "data_loader_round",
+                        "stage": "spec_propose",
+                        "round": round_num,
+                    }
+                )
+
+            spec_resp = cli.chat.completions.parse(
+                model=m,
+                messages=[
+                    {"role": "system", "content": propose_system},
+                    {"role": "user", "content": propose_user},
+                ],
+                response_format=YFinanceFetchSpec,
+            )
+            spec_parsed = spec_resp.choices[0].message.parsed
+            if spec_parsed is None:
+                result.stopped_reason = "error"
+                return result
+            spec = cast(YFinanceFetchSpec, spec_parsed)
         spec_dict = json.loads(spec.model_dump_json())
 
         if workspace is not None:
@@ -269,6 +345,16 @@ def run_data_loader(
             judge_user += f"### Workspace save confirmation\n\n{json.dumps(save_summary, indent=2, ensure_ascii=False)}\n\n"
         if dq:
             judge_user += f"### OHLCV / volume / close column coverage\n\n{json.dumps(dq, indent=2, ensure_ascii=False)[:6000]}\n"
+        if sp500_extra.strip():
+            judge_user += (
+                "### Note\n\nWorkspace contains `sp500_tickers` from a prior step "
+                f"({len(sp500_tickers)} symbols). "
+                "For S&P 500–wide research, accept the panel as ready when the **majority** of those tickers "
+                "are present with usable price columns, even if some recent IPOs or ticker changes produce "
+                "short / missing histories (that is expected survivorship/composition drift — the backtest "
+                "script can handle NaN columns). Do NOT reject solely because a handful of tickers have "
+                "shorter data or are missing.\n\n"
+            )
 
         judge_resp = cli.chat.completions.parse(
             model=m,
