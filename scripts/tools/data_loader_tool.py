@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -41,12 +42,15 @@ def run_data_loader(
 
     round_summaries: list[dict[str, Any]] = []
     for r in result.rounds:
+        workspace_path = r.load_meta.get("workspace_path")
         round_summaries.append(
             {
                 "round": r.round_num,
                 "spec_tickers": (r.spec or {}).get("tickers"),
                 "load_rows": r.load_meta.get("rows"),
                 "workspace_artifact": r.load_meta.get("workspace_artifact"),
+                "workspace_path": workspace_path,
+                "workspace_file_exists": bool(workspace_path) and Path(str(workspace_path)).exists(),
                 "judge_ready": r.judge.ready if r.judge else None,
                 "judge_reasoning": (r.judge.reasoning[:400] if r.judge else None),
             }
@@ -55,12 +59,15 @@ def run_data_loader(
     last = result.rounds[-1] if result.rounds else None
     judge_ready = last.judge.ready if last and last.judge else False
     has_raw = workspace.has("raw_data")
+    raw_data_path = str(workspace.df_path("raw_data")) if has_raw else None
 
     out: dict[str, Any] = {
         "stopped_reason": result.stopped_reason,
         "num_rounds": len(result.rounds),
         "round_summaries": round_summaries,
         "returncode": 0,
+        "raw_data_path": raw_data_path,
+        "raw_data_exists": raw_data_path is not None and Path(raw_data_path).exists(),
     }
     if not judge_ready or not has_raw:
         out["returncode"] = 1

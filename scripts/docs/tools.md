@@ -54,7 +54,7 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
 - **Implementation note:** `load_data` flattens Yahoo multi-index columns and, for single-ticker downloads, suffixes bare OHLCV names (`Close` → `Close_<TICKER>`) so downstream judges and features see stable price column names.
 - **When to use:** Default for any subtask whose job is to **obtain** market/OHLCV data for the run. Prefer over bare `load_data` in the main pipeline.
 - **Arguments:** `goal` (required; overall objective), `max_rounds` (default `4`), `workspace` (auto-injected), optional `event_callback` for streaming.
-- **Returns:** `stopped_reason`, `round_summaries`, `returncode` (`0` when judge accepted and `raw_data` exists), `last_spec`, `judge_reasoning` on failure.
+- **Returns:** `stopped_reason`, `round_summaries`, `returncode` (`0` when judge accepted and `raw_data` exists), `raw_data_path`, `raw_data_exists`, `last_spec`, `judge_reasoning` on failure. Each round summary also includes workspace save confirmation when available.
 - **ReAct example:** *Thought: Need a multi-asset panel for the user’s strategy.* → *Action: run_data_loader* with `{ "goal": "<subtask + parent goal>" }`.
 
 ---

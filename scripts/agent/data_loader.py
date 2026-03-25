@@ -10,6 +10,7 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from dotenv import load_dotenv
@@ -80,9 +81,23 @@ def _compact_load_meta(meta: dict[str, Any]) -> dict[str, Any]:
         "start",
         "end",
         "workspace_artifact",
+        "workspace_path",
         "kwargs_used",
     )
     return {k: meta[k] for k in keys if k in meta}
+
+
+def _workspace_save_summary(meta: dict[str, Any]) -> dict[str, Any]:
+    path_raw = meta.get("workspace_path")
+    if not path_raw:
+        return {}
+    path = Path(str(path_raw))
+    return {
+        "workspace_artifact": meta.get("workspace_artifact"),
+        "workspace_path": str(path),
+        "workspace_filename": path.name,
+        "workspace_file_exists": path.exists(),
+    }
 
 
 def _history_digest(rounds: list[LoaderRound], *, max_chars: int = 5000) -> str:
@@ -245,6 +260,9 @@ def run_data_loader(
             f"### Spec used\n\n{json.dumps(spec_dict, indent=2, ensure_ascii=False)}\n\n"
             f"### Load result (summary)\n\n{json.dumps(_compact_load_meta(load_meta), indent=2, ensure_ascii=False)}\n\n"
         )
+        save_summary = _workspace_save_summary(load_meta)
+        if save_summary:
+            judge_user += f"### Workspace save confirmation\n\n{json.dumps(save_summary, indent=2, ensure_ascii=False)}\n\n"
         if dq:
             judge_user += f"### OHLCV / volume / close column coverage\n\n{json.dumps(dq, indent=2, ensure_ascii=False)[:6000]}\n"
 
