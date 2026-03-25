@@ -18,7 +18,7 @@ def run_backtest(
     transaction_cost_bps: float = 5.0,
     max_position_pct: float = 1.0,
     initial_capital: float = 1_000_000.0,
-    train_ratio: float = 0.7,
+    train_ratio: float | None = None,
     workspace: Workspace | None = None,
     timeout_sec: int = 180,
 ) -> dict[str, Any]:
@@ -33,6 +33,9 @@ def run_backtest(
 
     The hyperparameters (``strategy_type``, ``rebalance_freq``, etc.) constrain the
     generated script; the LLM adapts the actual trading logic to the data.
+
+    ``train_ratio``: ``None`` (default) means **1.0** for ``rule_based`` (full-sample metrics)
+    and **0.7** for ``model_based`` (time-ordered train/test). Pass an explicit value to override.
     """
     if workspace is None:
         return {"error": "no_workspace", "message": "run_backtest requires a workspace."}
@@ -53,6 +56,14 @@ def run_backtest(
 
     data_df = pd.read_parquet(data_path)
     backtest_mode = "model_based" if model_output else "rule_based"
+    # Rule-based strategies (signals already in engineered_data) should evaluate on the full aligned
+    # history by default. train/test split is mainly for model_based walk-forward; a 70/30 split on rules
+    # often leaves a short, misleading "test" window (and bad date metadata in generated scripts).
+    effective_train_ratio = (
+        train_ratio
+        if train_ratio is not None
+        else (1.0 if backtest_mode == "rule_based" else 0.7)
+    )
     if model_output is not None:
         target_col = str(model_output.get("target_column", "target"))
         feature_cols = model_output.get("feature_columns", [])
@@ -81,7 +92,7 @@ def run_backtest(
         "transaction_cost_bps": transaction_cost_bps,
         "max_position_pct": max_position_pct,
         "initial_capital": initial_capital,
-        "train_ratio": train_ratio,
+        "train_ratio": effective_train_ratio,
     }
 
     from agent.backtest_skill import BacktestConfig, execute_backtest_skill

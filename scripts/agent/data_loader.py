@@ -100,7 +100,8 @@ def _history_digest(rounds: list[LoaderRound], *, max_chars: int = 5000) -> str:
     return text[-max_chars:] if len(text) > max_chars else text
 
 
-def _price_column_stats(df: Any) -> dict[str, Any]:
+def _ohlcv_column_stats(df: Any) -> dict[str, Any]:
+    """Non-null stats for OHLCV + adj close (bare names or ``Open_TICKER`` panel style)."""
     import pandas as pd
 
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
@@ -109,16 +110,24 @@ def _price_column_stats(df: Any) -> dict[str, Any]:
     cols: list[Any] = []
     for c in df.columns:
         cs = str(c)
-        if cs.startswith(("Adj Close_", "Close_")):
+        if cs in ("Open", "High", "Low", "Close", "Adj Close", "Volume"):
             cols.append(c)
-        elif cs in ("Close", "Adj Close"):
+        elif cs.startswith(
+            ("Open_", "High_", "Low_", "Close_", "Adj Close_", "Volume_")
+        ):
             cols.append(c)
     out: dict[str, Any] = {}
-    for c in cols[:40]:
+    for c in cols[:80]:
         s = df[c]
         nn = int(s.notna().sum()) if hasattr(s, "notna") else 0
         out[str(c)] = {"non_null": nn, "non_null_pct": round(100.0 * nn / max(n, 1), 2)}
-    return {"shape": [n, len(df.columns)], "price_columns": out}
+    return {
+        "shape": [n, len(df.columns)],
+        # Full OHLCV (+ volume) so judges can confirm MACD / indicator readiness, not only Close.
+        "column_coverage": out,
+        # Backward-compatible alias (older prompts refer to "price_columns")
+        "price_columns": {k: v for k, v in out.items() if "Close" in k or k in ("Close", "Adj Close")},
+    }
 
 
 def run_data_loader(
@@ -213,14 +222,15 @@ def run_data_loader(
         dq: dict[str, Any] = {}
         if workspace is not None and workspace.has("raw_data"):
             try:
-                dq = _price_column_stats(workspace.load_df("raw_data"))
+                dq = _ohlcv_column_stats(workspace.load_df("raw_data"))
             except Exception:  # noqa: BLE001
                 dq = {}
 
         judge_system = (
             "You review whether the latest Yahoo Finance download is adequate for the research goal. "
             "Output a structured decision only.\n"
-            "- ready=true: required assets and history exist with usable price columns (not effectively empty).\n"
+            "- ready=true: required assets and history exist with usable OHLCV (and Adj Close / Volume when needed) "
+            "— use the JSON field `column_coverage` for per-column non-null counts (not only `price_columns`).\n"
             "- ready=false: say what is wrong and set next_focus so the next download can fix it.\n"
         )
         if is_final:
@@ -236,7 +246,7 @@ def run_data_loader(
             f"### Load result (summary)\n\n{json.dumps(_compact_load_meta(load_meta), indent=2, ensure_ascii=False)}\n\n"
         )
         if dq:
-            judge_user += f"### Price column coverage\n\n{json.dumps(dq, indent=2, ensure_ascii=False)[:6000]}\n"
+            judge_user += f"### OHLCV / volume / close column coverage\n\n{json.dumps(dq, indent=2, ensure_ascii=False)[:6000]}\n"
 
         judge_resp = cli.chat.completions.parse(
             model=m,

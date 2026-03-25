@@ -46,7 +46,12 @@ class BacktestConfig(BaseModel):
     transaction_cost_bps: float = Field(default=5.0, ge=0, description="Round-trip cost in bps")
     max_position_pct: float = Field(default=1.0, gt=0, le=1.0, description="Max fraction per position")
     initial_capital: float = Field(default=1_000_000.0, gt=0)
-    train_ratio: float = Field(default=0.7, gt=0.1, lt=1.0, description="In-sample fraction")
+    train_ratio: float = Field(
+        default=0.7,
+        ge=0.1,
+        le=1.0,
+        description="Train fraction for time-ordered split. Use 1.0 for full-sample evaluation (typical rule_based).",
+    )
 
 
 def _openai_client() -> OpenAI:

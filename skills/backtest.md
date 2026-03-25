@@ -23,7 +23,7 @@ The planner decides these; you **must respect them exactly**:
 | `transaction_cost_bps` | float | Round-trip cost in basis points |
 | `max_position_pct` | float (0–1) | Max fraction of portfolio in one position |
 | `initial_capital` | float | Starting portfolio value |
-| `train_ratio` | float (0–1) | Fraction of data used for in-sample training; remainder is out-of-sample |
+| `train_ratio` | float (0.1–1.0) | Time-ordered split: first fraction **train**, remainder **test** for metrics. **`1.0` = evaluate on the full aligned history (no hold-out)** — **default for `rule_based`** when the tool does not override. For `model_based`, values `< 1` reserve an out-of-sample test tail for predictions. |
 
 ## What you produce
 
@@ -38,6 +38,7 @@ A **single Python script** that:
      - Convert predictions into signals.
    - **`rule_based`**:
      - Do **not** train a model.
+     - When `train_ratio == 1.0` (typical): compute strategy returns and **all** summary metrics on the **entire** usable date range (after any warm-up / NaN drop). Do **not** report metrics only on a short “test tail” unless `train_ratio < 1`.
      - Use prebuilt rule columns from the data directly. Prefer, in order:
        1. weight columns such as `w_*`, `weight*`, `position*`
        2. signal / score columns such as `signal*`, `score*`, `alpha*`, `mom*`
@@ -72,6 +73,8 @@ A **single Python script** that:
 
 6. Optionally saves an equity curve plot to `RUN_DIR / "equity.png"` (matplotlib, `savefig` only, never `show()`).
 7. Prints a short human-readable recap to stdout (≤ 40 lines).
+
+For `test_start` / `test_end` / `n_test_days`: use the **actual** first/last **dates** of the return series you evaluated (prefer the DataFrame’s **DatetimeIndex**). If the index is not datetimes, convert or derive dates from a date column — **never** emit placeholder epochs like `1970-01-01` unless that date truly appears in the data.
 
 ## Rules
 

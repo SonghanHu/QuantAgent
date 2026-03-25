@@ -167,7 +167,7 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
   - `transaction_cost_bps`: float, default `5.0` — round-trip cost in basis points
   - `max_position_pct`: float 0–1, default `1.0` — max portfolio fraction per position
   - `initial_capital`: float, default `1000000`
-  - `train_ratio`: float 0.1–1.0, default `0.7` — in-sample fraction (used mainly in `model_based` mode)
+  - `train_ratio`: optional float 0.1–1.0 — time-ordered train fraction; default **`1.0` for `rule_based`** (full-sample metrics) and **`0.7` for `model_based`** unless you pass an explicit value
   - `timeout_sec`: script execution timeout (default `180`)
   - `workspace`: auto-injected; must contain `engineered_data` or `raw_data`; `model_output` optional (selects mode)
 - **Returns:** `sharpe`, `max_drawdown`, `total_return`, `annual_return`, `win_rate`, `n_test_days`, `backtest_mode`, plus script execution details. Saves `backtest_results` JSON to workspace.
