@@ -162,7 +162,7 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
 - **When to use:** After `build_features` for rule-based strategies, or after `train_model` for predictive/ML strategies. Subtask mentions backtest, Sharpe, drawdown, turnover, PnL, equity curve, risk metrics.
 - **Arguments (hyperparameters):**
   - `strategy_type`: `"long_only"` (default) | `"long_short"` — whether the strategy can short
-  - `rebalance_freq`: `"daily"` (default) | `"weekly"` | `"monthly"` — rebalance cadence
+  - `rebalance_freq`: `"daily"` | `"weekly"` | `"monthly"` — rebalance cadence. **Omit** to let the tool infer `weekly` / `monthly` from `feature_plan` text (e.g. W-FRI, 周频); if nothing matches, defaults to `"daily"`. When the user’s goal states a cadence, **pass it explicitly** here (do not rely on inference alone).
   - `position_sizing`: `"equal_weight"` | `"signal_proportional"` (default) | `"volatility_scaled"`
   - `transaction_cost_bps`: float, default `5.0` — round-trip cost in basis points
   - `max_position_pct`: float 0–1, default `1.0` — max portfolio fraction per position
@@ -171,7 +171,8 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
   - `timeout_sec`: script execution timeout (default `180`)
   - `workspace`: auto-injected; must contain `engineered_data` or `raw_data`; `model_output` optional (selects mode)
 - **Returns:** `sharpe`, `max_drawdown`, `total_return`, `annual_return`, `win_rate`, `n_test_days`, `backtest_mode`, plus script execution details. Saves `backtest_results` JSON to workspace.
-- **ReAct example:** *Thought: Need long-short daily backtest with 10bps costs.* → *Action: run_backtest* with `{ "strategy_type": "long_short", "transaction_cost_bps": 10, "train_ratio": 0.7 }`.
+- **ReAct example:** *Thought: Need long-short daily backtest with 10bps costs.* → *Action: run_backtest* with `{ "strategy_type": "long_short", "rebalance_freq": "daily", "transaction_cost_bps": 10, "train_ratio": 0.7 }`.
+- **ReAct example (rotation):** *Thought: User asked for weekly rebalance.* → *Action: run_backtest* with `{ "rebalance_freq": "weekly", "strategy_type": "long_only" }`.
 
 ---
 

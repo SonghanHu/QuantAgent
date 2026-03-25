@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -11,9 +12,29 @@ if TYPE_CHECKING:
     from agent.workspace import Workspace
 
 
+def _infer_rebalance_freq_from_feature_plan(feature_plan: Any) -> str | None:
+    """
+    When the router omits ``rebalance_freq``, infer weekly/monthly from the feature plan text.
+
+    The tool default used to be ``daily``, which often disagreed with plans that describe
+    W-FRI / 周频 / weekly rebalance but never reached the tool kwargs.
+    """
+    if not isinstance(feature_plan, dict):
+        return None
+    blob = json.dumps(feature_plan, default=str, ensure_ascii=False).lower()
+    if re.search(
+        r"w[-_]?fri|weekly\s+rebal|rebal\w{0,16}\s+weekly|周频|周度调仓|每周\s*调仓|每周最后一个交易日",
+        blob,
+    ):
+        return "weekly"
+    if re.search(r"monthly\s+rebal|rebal\w{0,16}\s+monthly|月频|月度调仓", blob):
+        return "monthly"
+    return None
+
+
 def run_backtest(
     strategy_type: str = "long_only",
-    rebalance_freq: str = "daily",
+    rebalance_freq: str | None = None,
     position_sizing: str = "signal_proportional",
     transaction_cost_bps: float = 5.0,
     max_position_pct: float = 1.0,
@@ -33,6 +54,9 @@ def run_backtest(
 
     The hyperparameters (``strategy_type``, ``rebalance_freq``, etc.) constrain the
     generated script; the LLM adapts the actual trading logic to the data.
+
+    ``rebalance_freq``: if omitted (``None``), the tool may infer ``weekly`` / ``monthly`` from
+    ``feature_plan`` (e.g. W-FRI / 周频). Otherwise defaults to ``daily``.
 
     ``train_ratio``: ``None`` (default) means **1.0** for ``rule_based`` (full-sample metrics)
     and **0.7** for ``model_based`` (time-ordered train/test). Pass an explicit value to override.
@@ -87,7 +111,7 @@ def run_backtest(
 
     raw_config = {
         "strategy_type": strategy_type,
-        "rebalance_freq": rebalance_freq,
+        "rebalance_freq": effective_rebalance,
         "position_sizing": position_sizing,
         "transaction_cost_bps": transaction_cost_bps,
         "max_position_pct": max_position_pct,
@@ -140,4 +164,6 @@ def run_backtest(
     result["backtest_mode"] = backtest_mode
     if config_validation_fallback:
         result["config_validation_fallback"] = True
+    if not rf_arg and inferred_rf is not None:
+        result["rebalance_freq_inferred_from_feature_plan"] = inferred_rf
     return result

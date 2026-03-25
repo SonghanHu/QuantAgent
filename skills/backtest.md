@@ -40,9 +40,9 @@ A **single Python script** that:
      - Do **not** train a model.
      - When `train_ratio == 1.0` (typical): compute strategy returns and **all** summary metrics on the **entire** usable date range (after any warm-up / NaN drop). Do **not** report metrics only on a short “test tail” unless `train_ratio < 1`.
      - Use prebuilt rule columns from the data directly. Prefer, in order:
-       1. weight columns such as `w_*`, `weight*`, `position*`
-       2. signal / score columns such as `signal*`, `score*`, `alpha*`, `mom*`
-       3. feature-plan hints from `STRATEGY_CONTEXT_JSON` to identify the intended rule columns
+       1. Precomputed **strategy return** columns (`strategy_ret`, `strategy_ret_net`, …) if they are clearly portfolio returns.
+       2. **Signal / score** columns (`composite_score_*`, `signal*`, `score*`, `alpha*`, `mom*`, `rank_*`, `rel_str_*`, …) — normalize to weights, apply **`rebalance_freq`** (daily / weekly / monthly), then **`shift(1)`** so positions are known **before** each bar’s return (no look-ahead).
+       3. Generic weight columns (`w_*`, `weight*`, `position*`) **only if** they are execution-ready (already lagged). **Do not** treat `target_pos*`, `target_*`, or the feature plan’s `target_column` as raw tradable weights when those columns encode **labels**, hypothetical “next period winners”, or unshifted targets — that causes leakage and absurd equity curves. If unsure, rebuild positions from scores in step 2 instead.
      - If explicit weights are missing but signals exist, convert them into positions using `strategy_type` and `position_sizing`.
      - If the data already contains strategy return columns (e.g. `strategy_ret`, `strategy_ret_net`), you may use them directly and still compute metrics/turnover defensively.
 3. Applies **position sizing** per `position_sizing` when positions must be derived:
@@ -66,10 +66,17 @@ A **single Python script** that:
   "test_end": "YYYY-MM-DD",
   "n_test_days": int,
   "equity_curve": [float, ...],
+  "equity_dates": ["YYYY-MM-DD", ...],
+  "trade_events": [
+    { "date": "YYYY-MM-DD", "side": "buy" | "sell", "label": "optional reason" },
+    { "index": 42, "side": "sell", "label": "optional" }
+  ],
   "config": { ... },
   "notes": "..."
 }
 ```
+
+`equity_dates` (same length as `equity_curve`) and `trade_events` are **optional** but recommended: the run pipeline builds an interactive equity chart from them. Use either ISO `date` or integer `index` into the evaluated return series. Omit `trade_events` if there are no discrete trades to mark.
 
 6. Optionally saves an equity curve plot to `RUN_DIR / "equity.png"` (matplotlib, `savefig` only, never `show()`).
 7. Prints a short human-readable recap to stdout (≤ 40 lines).
@@ -78,7 +85,8 @@ For `test_start` / `test_end` / `n_test_days`: use the **actual** first/last **d
 
 ## Rules
 
-- **No look-ahead:** train only on data before test period; rolling features must use only past data.
+- **No look-ahead:** train only on data before test period; rolling features must use only past data. Positions for bar *t* must be fixed from information available at *t−1* (or last rebalance), then multiplied by returns at *t*.
+- **Match cadence:** `rebalance_freq` in `BACKTEST_CONFIG_JSON` must match how you form holdings (e.g. weekly plan → weekly rebalance mask, not daily unless the user asked for daily).
 - **Annualize:** Sharpe = mean(daily_returns) / std(daily_returns) × sqrt(252). Adjust if `rebalance_freq` != daily.
 - **Transaction costs:** compute turnover as sum of abs position changes; cost = turnover × `transaction_cost_bps` / 10000.
 - In `rule_based` mode, prefer using columns already produced by feature engineering rather than recreating the strategy from scratch.

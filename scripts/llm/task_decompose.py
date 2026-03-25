@@ -74,6 +74,7 @@ def decompose_task(task_text: str, *, model: str) -> TaskBreakdown:
         "- **CRITICAL:** Subtasks that consume prior outputs must **list dependencies** on those steps: "
         "e.g. `run_backtest` must depend on the subtask that runs `build_features` or `build_alphas` (and on `train_model` if you include it), "
         "not only on data loading. `evaluate_strategy` must depend on `run_backtest`.\n"
+        "- If the user specifies **rebalance cadence** (weekly, monthly, W-FRI, 周频, etc.), the **run_backtest** subtask **title or description** must repeat that cadence so tool routing can pass `rebalance_freq` (`weekly` / `monthly` / `daily`).\n"
         "- Do NOT create separate subtasks for things the tool handles internally "
         "(e.g. `run_data_analyst` already does cleaning, EDA, and feature planning).\n"
         "- If the user's goal only covers part of the pipeline (e.g. just analysis), "
