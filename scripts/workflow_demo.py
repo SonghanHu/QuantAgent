@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 from agent.events import EventBus
 from agent.executor import run_subtask
-from agent.models import Subtask
+from agent.models import Subtask, TaskBreakdown
 from agent.report_gen import build_fallback_report, generate_report
 from agent.state import AgentState, ExecutionRecord
 from agent.tool_routing import filter_kwargs_for_tool
@@ -41,6 +41,64 @@ from tools import TOOL_REGISTRY, run_tool
 #   })
 #   order = topo_order(new_plan.subtasks)
 #   ... continue execute loop
+
+
+def _subtask_primary_tool(st: Subtask) -> str | None:
+    """Best-effort tool name from title/description (matches typical decompose wording)."""
+    text = f"{st.title}\n{st.description}".lower()
+    for name in (
+        "run_data_loader",
+        "run_data_analyst",
+        "run_data_analysis",
+        "build_features",
+        "build_alphas",
+        "train_model",
+        "run_backtest",
+        "evaluate_strategy",
+        "run_debug_agent",
+        "web_search",
+        "load_data",
+    ):
+        if name in text:
+            return name
+    return None
+
+
+def repair_plan_dependencies(plan: TaskBreakdown) -> TaskBreakdown:
+    """
+    Ensure pipeline edges the LLM sometimes omits (e.g. backtest → must depend on features).
+
+    Without this, topo order can run ``run_backtest`` even when ``build_features`` failed because
+    the backtest subtask only depended on an earlier data-load step.
+    """
+    by_tool: dict[str, list[int]] = defaultdict(list)
+    for s in plan.subtasks:
+        t = _subtask_primary_tool(s)
+        if t:
+            by_tool[t].append(s.id)
+    for k in by_tool:
+        by_tool[k].sort()
+
+    new_subs: list[Subtask] = []
+    for s in plan.subtasks:
+        deps = set(s.dependencies)
+        tool = _subtask_primary_tool(s)
+        if tool == "run_backtest":
+            for key in ("build_features", "build_alphas", "train_model"):
+                for sid in by_tool.get(key, []):
+                    if sid != s.id:
+                        deps.add(sid)
+        elif tool == "evaluate_strategy":
+            for sid in by_tool.get("run_backtest", []):
+                if sid != s.id:
+                    deps.add(sid)
+        elif tool == "train_model":
+            for key in ("build_features", "build_alphas"):
+                for sid in by_tool.get(key, []):
+                    if sid != s.id:
+                        deps.add(sid)
+        new_subs.append(s.model_copy(update={"dependencies": sorted(deps)}))
+    return plan.model_copy(update={"subtasks": new_subs})
 
 
 def topo_order(subtasks: list[Subtask]) -> list[Subtask]:
@@ -122,7 +180,7 @@ def run_workflow(
         )
 
     log("=== 1. Decompose ===\n")
-    plan = decompose_task(goal, model=model)
+    plan = repair_plan_dependencies(decompose_task(goal, model=model))
     log(plan.model_dump_json(indent=2, ensure_ascii=False))
     log()
     if conn is not None and run_id is not None:
@@ -136,13 +194,6 @@ def run_workflow(
             total_subtasks=len(plan.subtasks),
             subtasks=[s.model_dump() for s in plan.subtasks],
         )
-
-    order = topo_order(plan.subtasks)
-    log("=== 2. Subtask order (topo) ===\n", [s.id for s in order], "\n")
-    if conn is not None and run_id is not None:
-        add_log(conn, run_id, "workflow", "topo_order", {"order": [s.id for s in order]})
-    if event_bus is not None:
-        event_bus.emit("workflow_topo_order", run_id=resolved_app_run_id, order=[s.id for s in order])
 
     log(f"=== Workspace: {ws.root} ===\n")
 
@@ -162,8 +213,20 @@ def run_workflow(
             event_bus.emit("data_analyst_round", run_id=resolved_app_run_id, **payload)
 
     previous_artifacts = ws.list_artifacts()
-    total_subtasks = len(order)
-    failed_subtask_ids: set[int] = set()
+    pipeline_halt_on_failure = os.environ.get("PIPELINE_HALT_ON_FAILURE", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+    max_replan = max(0, int(os.environ.get("REPLAN_MAX", "1") or "0"))
+    subtask_failure_retries = max(0, int(os.environ.get("SUBTASK_FAILURE_RETRIES", "2") or "0"))
+    replan_round = 0
+
+    def last_record_by_subtask(log: list[ExecutionRecord]) -> dict[int, ExecutionRecord]:
+        out: dict[int, ExecutionRecord] = {}
+        for r in log:
+            out[r.subtask_id] = r
+        return out
 
     def tool_output_indicates_failure(output: Any) -> bool:
         if not isinstance(output, dict):
@@ -258,29 +321,130 @@ def run_workflow(
             think_error=tw.get("error"),
         )
 
-    for i, st in enumerate(order):
-        idx = i + 1
-        next_st = order[i + 1] if i + 1 < len(order) else None
-        log(f"-- subtask {st.id}: {st.title[:60]}...")
-
-        upstream_failures = failed_subtask_ids & set(st.dependencies)
-        if upstream_failures:
-            skip_msg = f"Skipped: upstream subtask(s) {sorted(upstream_failures)} failed"
-            log(f"   SKIP — {skip_msg}\n")
-            failed_subtask_ids.add(st.id)
-            record = ExecutionRecord(
-                subtask_id=st.id,
-                tool_name="(skipped)",
-                status="error",
-                result_summary=skip_msg,
-                output=None,
+    while True:
+        assert state.plan is not None
+        plan_fixed = repair_plan_dependencies(state.plan)
+        state = state.model_copy(update={"plan": plan_fixed})
+        order = topo_order(plan_fixed.subtasks)
+        total_subtasks = len(order)
+        log("=== 2. Subtask order (topo) ===\n", [s.id for s in order], f" replan_round={replan_round}\n")
+        if conn is not None and run_id is not None:
+            add_log(
+                conn,
+                run_id,
+                "workflow",
+                "topo_order",
+                {"order": [s.id for s in order], "replan_round": replan_round},
             )
-            done = list(state.completed_subtasks)
-            if st.id not in done:
-                done.append(st.id)
-            log_list = list(state.execution_log)
-            log_list.append(record)
-            state = state.model_copy(update={"completed_subtasks": done, "execution_log": log_list, "status": "failed"})
+        if event_bus is not None:
+            event_bus.emit(
+                "workflow_topo_order",
+                run_id=resolved_app_run_id,
+                order=[s.id for s in order],
+                replan_round=replan_round,
+            )
+
+        failed_subtask_ids: set[int] = set()
+        halt_pipeline = False
+        halt_detail = ""
+        restart_after_replan = False
+
+        for i, st in enumerate(order):
+            idx = i + 1
+            next_st = order[i + 1] if i + 1 < len(order) else None
+            last_by = last_record_by_subtask(state.execution_log)
+            prev_rec = last_by.get(st.id)
+            if prev_rec and prev_rec.status == "ok" and prev_rec.tool_name != "(skipped)":
+                log(f"-- subtask {st.id}: already succeeded — skip re-execution (replan)\n")
+                continue
+
+            log(f"-- subtask {st.id}: {st.title[:60]}...")
+
+            if pipeline_halt_on_failure and halt_pipeline:
+                skip_msg = f"Skipped: pipeline halted — {halt_detail}. Later steps are not run until the failed step succeeds."
+                log(f"   SKIP — {skip_msg}\n")
+                failed_subtask_ids.add(st.id)
+                record = ExecutionRecord(
+                    subtask_id=st.id,
+                    tool_name="(skipped)",
+                    status="error",
+                    result_summary=skip_msg,
+                    output=None,
+                )
+                done = list(state.completed_subtasks)
+                if st.id not in done:
+                    done.append(st.id)
+                log_list = list(state.execution_log)
+                log_list.append(record)
+                state = state.model_copy(update={"completed_subtasks": done, "execution_log": log_list, "status": "failed"})
+                if event_bus is not None:
+                    event_bus.emit(
+                        "subtask_start",
+                        run_id=resolved_app_run_id,
+                        subtask_id=st.id,
+                        subtask_title=st.title,
+                        position=idx,
+                        total=total_subtasks,
+                        completed=len(state.completed_subtasks),
+                    )
+                    event_bus.emit(
+                        "subtask_done",
+                        run_id=resolved_app_run_id,
+                        subtask_id=st.id,
+                        subtask_title=st.title,
+                        tool_name="(skipped)",
+                        status="skipped",
+                        result_summary=skip_msg,
+                        output=None,
+                    )
+                if conn is not None and run_id is not None:
+                    add_log(conn, run_id, "tool_execution", f"subtask {st.id}", record.model_dump())
+                emit_step_think(st, record, next_st)
+                continue
+
+            upstream_failures = failed_subtask_ids & set(st.dependencies)
+            if upstream_failures:
+                skip_msg = f"Skipped: upstream subtask(s) {sorted(upstream_failures)} failed"
+                log(f"   SKIP — {skip_msg}\n")
+                failed_subtask_ids.add(st.id)
+                record = ExecutionRecord(
+                    subtask_id=st.id,
+                    tool_name="(skipped)",
+                    status="error",
+                    result_summary=skip_msg,
+                    output=None,
+                )
+                done = list(state.completed_subtasks)
+                if st.id not in done:
+                    done.append(st.id)
+                log_list = list(state.execution_log)
+                log_list.append(record)
+                state = state.model_copy(update={"completed_subtasks": done, "execution_log": log_list, "status": "failed"})
+                if event_bus is not None:
+                    event_bus.emit(
+                        "subtask_start",
+                        run_id=resolved_app_run_id,
+                        subtask_id=st.id,
+                        subtask_title=st.title,
+                        position=idx,
+                        total=total_subtasks,
+                        completed=len(state.completed_subtasks),
+                    )
+                    event_bus.emit(
+                        "subtask_done",
+                        run_id=resolved_app_run_id,
+                        subtask_id=st.id,
+                        subtask_title=st.title,
+                        tool_name="(skipped)",
+                        status="skipped",
+                        result_summary=skip_msg,
+                        output=None,
+                    )
+                if conn is not None and run_id is not None:
+                    add_log(conn, run_id, "tool_execution", f"subtask {st.id}", record.model_dump())
+                emit_step_think(st, record, next_st)
+                continue
+
             if event_bus is not None:
                 event_bus.emit(
                     "subtask_start",
@@ -291,155 +455,226 @@ def run_workflow(
                     total=total_subtasks,
                     completed=len(state.completed_subtasks),
                 )
-                event_bus.emit(
-                    "subtask_done",
-                    run_id=resolved_app_run_id,
-                    subtask_id=st.id,
-                    subtask_title=st.title,
-                    tool_name="(skipped)",
-                    status="skipped",
-                    result_summary=skip_msg,
-                    output=None,
-                )
-            if conn is not None and run_id is not None:
-                add_log(conn, run_id, "tool_execution", f"subtask {st.id}", record.model_dump())
-            emit_step_think(st, record, next_st)
-            continue
-
-        if event_bus is not None:
-            event_bus.emit(
-                "subtask_start",
-                run_id=resolved_app_run_id,
-                subtask_id=st.id,
-                subtask_title=st.title,
-                position=idx,
-                total=total_subtasks,
-                completed=len(state.completed_subtasks),
+            state = run_subtask(
+                state,
+                st,
+                workspace=ws,
+                use_llm_routing=True,
+                routing_model=model,
+                routing_retries=2,
+                event_callback=tool_event_callback,
             )
-        state = run_subtask(
-            state,
-            st,
-            workspace=ws,
-            use_llm_routing=True,
-            routing_model=model,
-            routing_retries=2,
-            event_callback=tool_event_callback,
-        )
-        last = state.execution_log[-1]
-        log(f"   tool={last.tool_name} status={last.status} {last.result_summary}\n")
-        if last.status == "error":
-            recovered = False
-            if os.environ.get("DEBUG_AGENT_ON_FAILURE", "0").strip().lower() in ("1", "true", "yes"):
-                try:
-                    from agent.debug_agent import run_debug_analysis
-
-                    dbg_model = os.environ.get("OPENAI_TASK_MODEL") or model
-                    analysis = run_debug_analysis(
-                        goal=state.goal,
-                        workspace=ws,
-                        query=last.result_summary,
-                        subtask=st,
-                        record=last,
-                        model=dbg_model,
+            last = state.execution_log[-1]
+            log(f"   tool={last.tool_name} status={last.status} {last.result_summary}\n")
+            if last.status == "error":
+                recovered = False
+                for rt in range(subtask_failure_retries):
+                    hint = (
+                        f"\n\n## Automatic retry {rt + 1}/{subtask_failure_retries}\n"
+                        f"Previous error:\n{last.result_summary[:4000]}"
                     )
-                    if not analysis.get("error"):
-                        ws.save_json(
-                            "debug_notes",
-                            analysis,
-                            description="Automatic debug analysis after subtask failure",
-                        )
-                        if event_bus is not None:
-                            event_bus.emit(
-                                "workspace_update",
-                                run_id=resolved_app_run_id,
-                                artifact_name="debug_notes",
-                                artifact=ws.list_artifacts().get("debug_notes", {}),
-                            )
+                    st_fb = st.model_copy(update={"description": (st.description or "") + hint})
                     if event_bus is not None:
                         event_bus.emit(
-                            "debug_agent_done",
+                            "subtask_retry",
                             run_id=resolved_app_run_id,
                             subtask_id=st.id,
-                            tool_name=last.tool_name,
-                            summary=str(analysis.get("summary", ""))[:800],
-                            category=str(analysis.get("category", "")),
-                            debug_error=analysis.get("error"),
+                            attempt=rt + 1,
+                            max_attempts=subtask_failure_retries,
                         )
-                    if not analysis.get("error") and analysis.get("should_retry_upstream"):
-                        recovery_steps = list(analysis.get("recovery_steps") or [])
-                        recovery_ok = True
-                        for step in recovery_steps:
-                            if not isinstance(step, dict):
-                                recovery_ok = False
-                                break
-                            tool_name = str(step.get("tool_name") or "").strip()
-                            step_kwargs = step.get("kwargs") if isinstance(step.get("kwargs"), dict) else {}
-                            output, failed = run_recovery_step(
-                                owner_subtask=st,
-                                tool_name=tool_name,
-                                raw_kwargs=step_kwargs,
-                                reason=str(step.get("reason") or ""),
+                    if event_bus is not None:
+                        event_bus.emit(
+                            "subtask_start",
+                            run_id=resolved_app_run_id,
+                            subtask_id=st.id,
+                            subtask_title=st.title,
+                            position=idx,
+                            total=total_subtasks,
+                            completed=len(state.completed_subtasks),
+                        )
+                    state = run_subtask(
+                        state,
+                        st_fb,
+                        workspace=ws,
+                        use_llm_routing=True,
+                        routing_model=model,
+                        routing_retries=2,
+                        event_callback=tool_event_callback,
+                    )
+                    last = state.execution_log[-1]
+                    log(f"   retry-after-failure tool={last.tool_name} status={last.status}\n")
+                    if last.status == "ok":
+                        recovered = True
+                        break
+                if last.status == "error":
+                    recovered = False
+                    if os.environ.get("DEBUG_AGENT_ON_FAILURE", "0").strip().lower() in ("1", "true", "yes"):
+                        try:
+                            from agent.debug_agent import run_debug_analysis
+
+                            dbg_model = os.environ.get("OPENAI_TASK_MODEL") or model
+                            analysis = run_debug_analysis(
+                                goal=state.goal,
+                                workspace=ws,
+                                query=last.result_summary,
+                                subtask=st,
+                                record=last,
+                                model=dbg_model,
                             )
+                            if not analysis.get("error"):
+                                ws.save_json(
+                                    "debug_notes",
+                                    analysis,
+                                    description="Automatic debug analysis after subtask failure",
+                                )
+                                if event_bus is not None:
+                                    event_bus.emit(
+                                        "workspace_update",
+                                        run_id=resolved_app_run_id,
+                                        artifact_name="debug_notes",
+                                        artifact=ws.list_artifacts().get("debug_notes", {}),
+                                    )
+                            if event_bus is not None:
+                                dbg_msg = analysis.get("message")
+                                event_bus.emit(
+                                    "debug_agent_done",
+                                    run_id=resolved_app_run_id,
+                                    subtask_id=st.id,
+                                    tool_name=last.tool_name,
+                                    summary=str(analysis.get("summary", ""))[:800],
+                                    category=str(analysis.get("category", "")),
+                                    debug_error=analysis.get("error"),
+                                    debug_message=(str(dbg_msg)[:1200] if dbg_msg is not None else None),
+                                )
+                            if not analysis.get("error") and analysis.get("should_retry_upstream"):
+                                recovery_steps = list(analysis.get("recovery_steps") or [])
+                                recovery_ok = True
+                                for step in recovery_steps:
+                                    if not isinstance(step, dict):
+                                        recovery_ok = False
+                                        break
+                                    tool_name = str(step.get("tool_name") or "").strip()
+                                    step_kwargs = step.get("kwargs") if isinstance(step.get("kwargs"), dict) else {}
+                                    output, failed = run_recovery_step(
+                                        owner_subtask=st,
+                                        tool_name=tool_name,
+                                        raw_kwargs=step_kwargs,
+                                        reason=str(step.get("reason") or ""),
+                                    )
+                                    if conn is not None and run_id is not None:
+                                        add_log(
+                                            conn,
+                                            run_id,
+                                            "recovery_step",
+                                            f"subtask {st.id} -> {tool_name}",
+                                            {"output": output, "failed": failed},
+                                        )
+                                    if failed:
+                                        recovery_ok = False
+                                        break
+                                    previous_artifacts = emit_workspace_updates(previous_artifacts)
+                                if recovery_ok and analysis.get("retry_failed_subtask", True):
+                                    state = state.model_copy(update={"status": "running"})
+                                    if event_bus is not None:
+                                        event_bus.emit(
+                                            "subtask_start",
+                                            run_id=resolved_app_run_id,
+                                            subtask_id=st.id,
+                                            subtask_title=st.title,
+                                            position=idx,
+                                            total=total_subtasks,
+                                            completed=len(state.completed_subtasks),
+                                        )
+                                    state = run_subtask(
+                                        state,
+                                        st,
+                                        workspace=ws,
+                                        use_llm_routing=True,
+                                        routing_model=model,
+                                        routing_retries=2,
+                                        event_callback=tool_event_callback,
+                                    )
+                                    last = state.execution_log[-1]
+                                    log(f"   retry tool={last.tool_name} status={last.status} {last.result_summary}\n")
+                                    if last.status != "error":
+                                        recovered = True
+                        except Exception as dbg_exc:  # noqa: BLE001
+                            if event_bus is not None:
+                                exc_text = str(dbg_exc)[:1200]
+                                event_bus.emit(
+                                    "debug_agent_done",
+                                    run_id=resolved_app_run_id,
+                                    subtask_id=st.id,
+                                    tool_name=last.tool_name,
+                                    summary="",
+                                    category="",
+                                    debug_error=exc_text,
+                                    debug_message=exc_text,
+                                )
+                if not recovered:
+                    replan_ok = False
+                    if replan_round < max_replan:
+                        try:
+                            from agent.plan_revision import revise_plan
+
+                            new_plan = revise_plan(
+                                state.goal,
+                                state,
+                                model=model,
+                                failure_summary=last.result_summary,
+                                failed_subtask_id=st.id,
+                            )
+                            new_plan = repair_plan_dependencies(new_plan)
+                            state = state.model_copy(
+                                update={
+                                    "plan": new_plan,
+                                    "plan_version": state.plan_version + 1,
+                                    "replan_triggers": [*state.replan_triggers, f"replan_subtask_{st.id}"],
+                                    "status": "running",
+                                },
+                            )
+                            replan_round += 1
                             if conn is not None and run_id is not None:
                                 add_log(
                                     conn,
                                     run_id,
-                                    "recovery_step",
-                                    f"subtask {st.id} -> {tool_name}",
-                                    {"output": output, "failed": failed},
+                                    "plan_replan",
+                                    f"v{state.plan_version}",
+                                    {"plan": new_plan.model_dump(), "after_subtask": st.id},
                                 )
-                            if failed:
-                                recovery_ok = False
-                                break
-                            previous_artifacts = emit_workspace_updates(previous_artifacts)
-                        if recovery_ok and analysis.get("retry_failed_subtask", True):
-                            state = state.model_copy(update={"status": "running"})
                             if event_bus is not None:
                                 event_bus.emit(
-                                    "subtask_start",
+                                    "plan_replan",
                                     run_id=resolved_app_run_id,
-                                    subtask_id=st.id,
-                                    subtask_title=st.title,
-                                    position=idx,
-                                    total=total_subtasks,
-                                    completed=len(state.completed_subtasks),
+                                    plan_version=state.plan_version,
+                                    failed_subtask_id=st.id,
+                                    replan_round=replan_round,
                                 )
-                            state = run_subtask(
-                                state,
-                                st,
-                                workspace=ws,
-                                use_llm_routing=True,
-                                routing_model=model,
-                                routing_retries=2,
-                                event_callback=tool_event_callback,
-                            )
-                            last = state.execution_log[-1]
-                            log(f"   retry tool={last.tool_name} status={last.status} {last.result_summary}\n")
-                            if last.status != "error":
-                                recovered = True
-                except Exception as dbg_exc:  # noqa: BLE001
-                    if event_bus is not None:
-                        event_bus.emit(
-                            "debug_agent_done",
-                            run_id=resolved_app_run_id,
-                            subtask_id=st.id,
-                            tool_name=last.tool_name,
-                            summary="",
-                            category="",
-                            debug_error=str(dbg_exc),
-                        )
-            if not recovered:
-                failed_subtask_ids.add(st.id)
-        if conn is not None and run_id is not None:
-            add_log(
-                conn,
-                run_id,
-                "tool_execution",
-                f"subtask {st.id}",
-                last.model_dump(),
-            )
-        previous_artifacts = emit_workspace_updates(previous_artifacts)
-        emit_step_think(st, last, next_st, artifacts_for_prompt=previous_artifacts)
+                            replan_ok = True
+                            restart_after_replan = True
+                        except Exception as exc:  # noqa: BLE001
+                            log(f"plan_replan failed: {exc}\n")
+                    if replan_ok:
+                        previous_artifacts = emit_workspace_updates(previous_artifacts)
+                        break
+                    failed_subtask_ids.add(st.id)
+                    if pipeline_halt_on_failure:
+                        halt_pipeline = True
+                        halt_detail = f"subtask {st.id} ({last.tool_name}) failed"
+            if conn is not None and run_id is not None:
+                add_log(
+                    conn,
+                    run_id,
+                    "tool_execution",
+                    f"subtask {st.id}",
+                    last.model_dump(),
+                )
+            previous_artifacts = emit_workspace_updates(previous_artifacts)
+            emit_step_think(st, last, next_st, artifacts_for_prompt=previous_artifacts)
+
+        if restart_after_replan:
+            continue
+        break
 
     failed = bool(failed_subtask_ids)
     state = state.model_copy(update={"status": "failed" if failed else "done"})
