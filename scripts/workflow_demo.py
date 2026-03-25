@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from agent.events import EventBus
 from agent.executor import run_subtask
 from agent.models import Subtask, TaskBreakdown
+from agent.equity_viz import write_equity_viz_for_workspace
 from agent.report_gen import build_fallback_report, generate_report
 from agent.state import AgentState, ExecutionRecord
 from agent.tool_routing import filter_kwargs_for_tool
@@ -701,6 +702,14 @@ def run_workflow(
     except Exception as exc:  # noqa: BLE001
         log(f"Report generation failed: {exc}\n")
         report = build_fallback_report(state, ws, error=str(exc))
+
+    log("=== 4b. Equity visualization (from backtest_results) ===\n")
+    try:
+        if write_equity_viz_for_workspace(ws):
+            log("Wrote equity_viz + equity_chart\n")
+            previous_artifacts = emit_workspace_updates(previous_artifacts)
+    except Exception as exc:  # noqa: BLE001
+        log(f"Equity viz skipped: {exc}\n")
 
     log("=== 5. Final AgentState ===\n")
     log(state.model_dump_json(indent=2, ensure_ascii=False))

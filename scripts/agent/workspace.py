@@ -101,6 +101,35 @@ class Workspace:
             raise KeyError(f"No artifact '{name}'; available: {list(self._manifest)}")
         return json.loads(Path(meta.path).read_text())
 
+    def artifact_path(self, name: str) -> Path:
+        """Filesystem path for any manifest entry (parquet, json, image, …)."""
+        meta = self._manifest.get(name)
+        if meta is None:
+            raise KeyError(f"No artifact '{name}'; available: {list(self._manifest)}")
+        return Path(meta.path)
+
+    def save_binary(
+        self,
+        name: str,
+        *,
+        filename: str,
+        data: bytes,
+        kind: str = "image",
+        description: str = "",
+    ) -> Path:
+        """Write raw bytes under the workspace root and register in the manifest."""
+        path = self.root / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        self._manifest[name] = ArtifactMeta(
+            name=name,
+            path=str(path),
+            kind=kind,
+            description=description,
+        )
+        self._flush_manifest()
+        return path
+
     def discard(self, name: str) -> None:
         """Remove an artifact from the manifest and delete its file if present."""
         meta = self._manifest.pop(name, None)
