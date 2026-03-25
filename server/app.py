@@ -26,6 +26,50 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACES_ROOT = REPO_ROOT / "data" / "workspaces"
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
+# LLM-generated scripts keyed by workspace run_id (same id as ``data/workspaces/<run_id>``).
+_AGENT_SCRIPT_DEFS: tuple[tuple[str, Path, str, str], ...] = (
+    ("analysis", REPO_ROOT / "data" / "analysis_runs", "analysis.py", "Data analysis"),
+    ("feature_eng", REPO_ROOT / "data" / "feature_runs", "feature_eng.py", "Feature engineering"),
+    ("alpha", REPO_ROOT / "data" / "alpha_runs", "alpha_eng.py", "Alpha factors"),
+    ("backtest", REPO_ROOT / "data" / "backtest_runs", "backtest.py", "Backtest"),
+)
+_MAX_AGENT_SCRIPT_PREVIEW_CHARS = 400_000
+
+
+def _list_agent_scripts(run_id: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for script_id, base, filename, label in _AGENT_SCRIPT_DEFS:
+        p = (base / run_id / filename).resolve()
+        base_r = base.resolve()
+        if not p.is_relative_to(base_r) or p.name != filename:
+            continue
+        if p.is_file():
+            st = p.stat()
+            out.append(
+                {
+                    "id": script_id,
+                    "filename": filename,
+                    "label": label,
+                    "size_bytes": st.st_size,
+                }
+            )
+    return out
+
+
+def _read_agent_script_file(run_id: str, script_id: str) -> str:
+    for sid, base, filename, _label in _AGENT_SCRIPT_DEFS:
+        if sid != script_id:
+            continue
+        p = (base / run_id / filename).resolve()
+        base_r = base.resolve()
+        if not p.is_relative_to(base_r) or p.name != filename or not p.is_file():
+            raise HTTPException(status_code=404, detail=f"script not found: {script_id}")
+        raw = p.read_text(encoding="utf-8", errors="replace")
+        if len(raw) > _MAX_AGENT_SCRIPT_PREVIEW_CHARS:
+            raw = raw[:_MAX_AGENT_SCRIPT_PREVIEW_CHARS] + "\n\n...[truncated for preview]..."
+        return raw
+    raise HTTPException(status_code=404, detail=f"unknown script id: {script_id}")
+
 app = FastAPI(title="Agent Dashboard API")
 app.add_middleware(
     CORSMiddleware,
@@ -143,6 +187,20 @@ def workspace_manifest(run_id: str) -> dict[str, Any]:
         "workspace_dir": str(ws.root),
         "summary": ws.summary(),
         "artifacts": ws.list_artifacts(),
+        "agent_scripts": _list_agent_scripts(run_id),
+    }
+
+
+@app.get("/api/workspace/{run_id}/agent-scripts/{script_id}")
+def workspace_agent_script(run_id: str, script_id: str) -> dict[str, Any]:
+    """Return generated Python for this run (analysis / features / alpha / backtest)."""
+    _open_workspace(run_id)
+    content = _read_agent_script_file(run_id, script_id)
+    return {
+        "artifact_name": f"script:{script_id}",
+        "kind": "text",
+        "language": "python",
+        "content": content,
     }
 
 
