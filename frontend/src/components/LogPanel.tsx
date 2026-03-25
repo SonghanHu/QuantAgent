@@ -4,6 +4,8 @@ import type { AgentEvent } from '../types'
 
 type LogPanelProps = {
   events: AgentEvent[]
+  /** Extra classes for outer section (e.g. height in flex parent). */
+  className?: string
 }
 
 function summarizeText(text: string, maxLength = 120) {
@@ -32,8 +34,24 @@ function formatEvent(event: AgentEvent): { icon: string; label: string; detail: 
       return {
         icon: '📐',
         label: 'Topological order computed',
-        detail: `Execution order: ${(event.order as number[])?.join(' → ') ?? ''}`,
+        detail: `Execution order: ${(event.order as number[])?.join(' → ') ?? ''}${
+          event.replan_round != null ? ` · replan ${String(event.replan_round)}` : ''
+        }`,
         tone: 'border-white/10 bg-slate-900/60',
+      }
+    case 'subtask_retry':
+      return {
+        icon: '🔁',
+        label: `Retry attempt ${event.attempt}/${event.max_attempts} · subtask #${event.subtask_id}`,
+        detail: 'LLM routing with failure appended to description',
+        tone: 'border-amber-400/25 bg-amber-400/5',
+      }
+    case 'plan_replan':
+      return {
+        icon: '🗺',
+        label: `Plan revised (v${event.plan_version}) after #${event.failed_subtask_id}`,
+        detail: `Replan round ${String(event.replan_round ?? '')}`,
+        tone: 'border-lime-400/25 bg-lime-400/5',
       }
     case 'subtask_start':
       return {
@@ -149,11 +167,14 @@ function formatEvent(event: AgentEvent): { icon: string; label: string; detail: 
       }
     case 'debug_agent_done': {
       const err = event.debug_error as string | undefined
+      const msg = String(event.debug_message ?? '')
       const cat = String(event.category ?? '')
+      const sum = String(event.summary ?? '')
+      const detailText = sum || msg || err || ''
       return {
         icon: err ? '⚠' : '🔧',
         label: err ? 'Debug agent failed' : `Debug · ${cat || 'analysis'}`,
-        detail: String(event.summary ?? err ?? '').slice(0, 200),
+        detail: detailText.slice(0, 200),
         tone: err ? 'border-rose-400/20 bg-rose-400/5' : 'border-orange-400/20 bg-orange-400/5',
       }
     }
@@ -233,6 +254,44 @@ function renderExpandedSummary(event: AgentEvent, detail: string): ReactNode {
     )
   }
 
+  if (event.type === 'debug_agent_done') {
+    const err = event.debug_error != null ? String(event.debug_error) : ''
+    const msg = String(event.debug_message ?? '')
+    const sum = String(event.summary ?? '')
+    const cat = String(event.category ?? '')
+    return (
+      <div className="space-y-2">
+        {err ? (
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Error code</div>
+            <div className="break-words text-xs text-rose-300">{err}</div>
+          </div>
+        ) : null}
+        {msg ? (
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Detail</div>
+            <div className="break-words text-xs leading-relaxed text-slate-300">{msg}</div>
+          </div>
+        ) : null}
+        {cat ? (
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Category</div>
+            <div className="text-xs text-slate-400">{cat}</div>
+          </div>
+        ) : null}
+        {sum ? (
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Summary</div>
+            <div className="break-words text-xs leading-relaxed text-slate-300">{sum}</div>
+          </div>
+        ) : null}
+        {!err && !msg && !sum && !cat ? (
+          <div className="text-xs text-slate-500">No additional summary.</div>
+        ) : null}
+      </div>
+    )
+  }
+
   if (detail) {
     return <div className="text-xs leading-relaxed text-slate-300">{detail}</div>
   }
@@ -240,7 +299,7 @@ function renderExpandedSummary(event: AgentEvent, detail: string): ReactNode {
   return <div className="text-xs text-slate-500">No additional summary.</div>
 }
 
-export function LogPanel({ events }: LogPanelProps) {
+export function LogPanel({ events, className = '' }: LogPanelProps) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -258,8 +317,8 @@ export function LogPanel({ events }: LogPanelProps) {
   }
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/5 p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
+    <section className={`flex min-h-0 min-w-0 flex-col rounded-2xl border border-white/10 bg-white/5 p-3 ${className}`}>
+      <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold tracking-wide text-white">Live log</h2>
           <div className="tabular-nums text-[11px] text-slate-500">{events.length} events</div>
@@ -296,7 +355,7 @@ export function LogPanel({ events }: LogPanelProps) {
       </div>
       <div
         ref={listRef}
-        className="max-h-[min(30rem,60vh)] space-y-1 overflow-auto pr-0.5"
+        className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden pr-1"
         onScroll={handleScroll}
       >
         {events.length === 0 ? (
@@ -308,41 +367,45 @@ export function LogPanel({ events }: LogPanelProps) {
             const { icon, label, detail, tone } = formatEvent(event)
             const isExpanded = expandedIndex === index
             return (
-              <article key={`${event.ts}-${index}`} className={`rounded-lg border ${tone}`}>
+              <article key={`${event.ts}-${index}`} className={`max-w-full overflow-hidden rounded-lg border ${tone}`}>
                 <button
                   type="button"
-                  className="w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05]"
+                  className="w-full max-w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05]"
                   aria-expanded={isExpanded}
                   onClick={() => setExpandedIndex(isExpanded ? null : index)}
                 >
                   <div className="flex items-start gap-1.5">
                     <span className="mt-0.5 flex-shrink-0 text-[11px] leading-none opacity-90">{icon}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="truncate text-[13px] font-medium leading-snug text-slate-200">{label}</span>
-                        <span className="flex items-center gap-1.5">
-                          <span className="flex-shrink-0 text-[10px] tabular-nums text-slate-600">
+                    <div className="min-w-0 max-w-full flex-1 overflow-hidden">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="line-clamp-2 min-w-0 flex-1 break-words text-[13px] font-medium leading-snug text-slate-200">
+                          {label}
+                        </span>
+                        <span className="flex flex-shrink-0 items-center gap-1.5">
+                          <span className="text-[10px] tabular-nums text-slate-600">
                             {new Date(event.ts).toLocaleTimeString()}
                           </span>
                           <span className="text-[11px] text-slate-500">{isExpanded ? '−' : '+'}</span>
                         </span>
                       </div>
                       {detail && !isExpanded && (
-                        <div className="mt-0.5 truncate text-xs leading-snug text-slate-500">{detail}</div>
+                        <div className="mt-0.5 line-clamp-2 break-words text-xs leading-snug text-slate-500">
+                          {detail}
+                        </div>
                       )}
                     </div>
                   </div>
                 </button>
                 {isExpanded && (
-                  <div className="mx-2 mb-2 space-y-2">
-                    <div className="rounded-md bg-slate-950/40 p-2">
+                  <div className="mx-2 mb-2 max-w-full space-y-2 overflow-hidden">
+                    <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-md bg-slate-950/40 p-2">
                       {renderExpandedSummary(event, detail)}
                     </div>
                     <details className="rounded-md bg-slate-950/30 p-2">
                       <summary className="cursor-pointer text-[11px] text-slate-500 hover:text-slate-400">
                         Raw event
                       </summary>
-                      <pre className="mt-2 max-h-40 overflow-auto text-[11px] leading-relaxed text-slate-400">
+                      <pre className="mt-2 max-h-48 overflow-auto break-all text-[11px] leading-relaxed text-slate-400">
                         {JSON.stringify(event, null, 2)}
                       </pre>
                     </details>

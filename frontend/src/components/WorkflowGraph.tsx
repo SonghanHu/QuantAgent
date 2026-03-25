@@ -4,6 +4,8 @@ import type { AgentEvent } from '../types'
 
 type WorkflowGraphProps = {
   events: AgentEvent[]
+  /** Strip detailed node list; keep horizontal pipeline + summary (for Activity tab). */
+  compact?: boolean
 }
 
 type PipelineNode = {
@@ -49,6 +51,33 @@ const DEFAULT_STYLE = { dot: 'bg-slate-400', badge: 'bg-slate-400/15 text-slate-
 function getToolStyle(toolName?: string) {
   if (!toolName) return DEFAULT_STYLE
   return TOOL_STYLE[toolName] ?? DEFAULT_STYLE
+}
+
+/** Short line under each pipeline dot — avoid slicing raw titles to 6 chars. */
+function compactTitleWords(title: string, maxChars = 24): string {
+  const t = title.trim()
+  if (t.length <= maxChars) return t
+  const slice = t.slice(0, maxChars)
+  const lastSpace = slice.lastIndexOf(' ')
+  return `${lastSpace > 6 ? slice.slice(0, lastSpace) : slice}…`
+}
+
+function inferToolKeyFromTitle(title: string): keyof typeof TOOL_STYLE | undefined {
+  const t = title.toLowerCase()
+  const keys = Object.keys(TOOL_STYLE) as (keyof typeof TOOL_STYLE)[]
+  for (const key of keys) {
+    const underscored = String(key)
+    const spaced = underscored.replace(/_/g, ' ')
+    if (t.includes(underscored) || t.includes(spaced)) return key
+  }
+  return undefined
+}
+
+function pipelineMiniLabel(node: PipelineNode): string {
+  if (node.toolName) return getToolStyle(node.toolName).label
+  const inferred = inferToolKeyFromTitle(node.title)
+  if (inferred) return TOOL_STYLE[inferred].label
+  return compactTitleWords(node.title, 26)
 }
 
 const STATUS_ICON: Record<string, string> = {
@@ -209,14 +238,16 @@ function SubRoundIndicator({ rounds }: { rounds: SubRound[] }) {
   )
 }
 
-export function WorkflowGraph({ events }: WorkflowGraphProps) {
+export function WorkflowGraph({ events, compact = false }: WorkflowGraphProps) {
   const { nodes, topoOrder } = useMemo(() => derivePipeline(events), [events])
 
   if (nodes.length === 0) {
     return (
-      <section className="rounded-3xl border border-white/10 bg-white/5 p-5">
-        <h2 className="text-lg font-semibold text-white">Agent Workflow</h2>
-        <p className="mt-1 text-base text-slate-400">The task decomposition and agent pipeline appear here once the run starts.</p>
+      <section className={compact ? 'rounded-2xl border border-white/10 bg-white/5 p-3' : 'rounded-3xl border border-white/10 bg-white/5 p-5'}>
+        <h2 className={`font-semibold text-white ${compact ? 'text-sm' : 'text-lg'}`}>Agent Workflow</h2>
+        <p className={`mt-1 text-slate-400 ${compact ? 'text-xs' : 'text-base'}`}>
+          The task decomposition and agent pipeline appear here once the run starts.
+        </p>
       </section>
     )
   }
@@ -232,11 +263,11 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
   }
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/5 p-5">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <section className={`border border-white/10 bg-white/5 ${compact ? 'rounded-2xl p-3' : 'rounded-3xl p-5'}`}>
+      <div className={`flex flex-wrap items-center justify-between gap-3 ${compact ? 'mb-2' : 'mb-4'}`}>
         <div>
-          <h2 className="text-lg font-semibold text-white">Agent Workflow</h2>
-          <p className="text-base text-slate-400">
+          <h2 className={`font-semibold text-white ${compact ? 'text-sm' : 'text-lg'}`}>Agent Workflow</h2>
+          <p className={`text-slate-400 ${compact ? 'text-xs' : 'text-base'}`}>
             {orderedNodes.length} subtasks · {toolGroups.size} agents collaborating
           </p>
         </div>
@@ -246,7 +277,7 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
             return (
               <span
                 key={tool}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm ring-1 ${style.badge}`}
+                className={`inline-flex items-center gap-1.5 rounded-full ring-1 ${compact ? 'px-2 py-1 text-[11px]' : 'px-3 py-1.5 text-sm'} ${style.badge}`}
               >
                 <span className={`h-2 w-2 rounded-full ${style.dot}`} />
                 {style.label} ×{count}
@@ -257,15 +288,16 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
       </div>
 
       {/* Horizontal mini-pipeline */}
-      <div className="mb-5 overflow-x-auto pb-2">
-        <div className="flex items-center gap-0 px-2" style={{ minWidth: orderedNodes.length * 56 }}>
+      <div className={`overflow-x-auto pb-2 ${compact ? 'mb-0' : 'mb-5'}`}>
+        <div className="flex items-start gap-0 px-1" style={{ minWidth: orderedNodes.length * 76 }}>
           {orderedNodes.map((node, idx) => {
             const style = getToolStyle(node.toolName)
+            const mini = pipelineMiniLabel(node)
             return (
-              <div key={node.id} className="flex items-center">
-                <div className="group relative flex flex-col items-center" style={{ width: 48 }}>
+              <div key={node.id} className="flex items-start">
+                <div className="group relative flex flex-col items-center" style={{ width: 72 }}>
                   <div
-                    className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ring-2 ${
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ring-2 ${
                       node.status === 'done'
                         ? `${style.dot} text-slate-950 ring-white/20`
                         : node.status === 'running'
@@ -281,20 +313,26 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
                       ? STATUS_ICON[node.status]
                       : node.id}
                   </div>
-                  <div className="mt-1 w-14 truncate text-center text-[11px] text-slate-500">
-                    {node.title.slice(0, 6)}
+                  <div className="mt-1.5 w-full px-0.5 text-center">
+                    <div
+                      className={`line-clamp-2 break-words text-[10px] font-medium leading-snug ${compact ? 'text-slate-500' : 'text-slate-400'}`}
+                      title={node.title}
+                    >
+                      {mini}
+                    </div>
+                    <div className="mt-0.5 text-[9px] tabular-nums text-slate-600">#{node.id}</div>
                   </div>
-                  <div className="pointer-events-none absolute bottom-full z-20 mb-2 hidden w-56 rounded-lg border border-white/10 bg-slate-900 p-2 text-sm text-slate-300 shadow-xl group-hover:block">
+                  <div className="pointer-events-none absolute bottom-full z-20 mb-2 hidden w-60 rounded-lg border border-white/10 bg-slate-900 p-2 text-sm text-slate-300 shadow-xl group-hover:block">
                     <div className="font-medium text-white">{node.title}</div>
                     {node.toolName && (
-                      <div className={`mt-1 ${getToolStyle(node.toolName).badge.split(' ')[1]}`}>
-                        {getToolStyle(node.toolName).label}
+                      <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs ring-1 ${style.badge}`}>
+                        {style.label}
                       </div>
                     )}
                   </div>
                 </div>
                 {idx < orderedNodes.length - 1 && (
-                  <div className="h-px w-2 bg-slate-700" />
+                  <div className="mt-3.5 h-px w-2 shrink-0 bg-slate-700" />
                 )}
               </div>
             )
@@ -303,6 +341,7 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
       </div>
 
       {/* Detailed node list */}
+      {!compact && (
       <div className="relative space-y-0">
         {orderedNodes.map((node, idx) => {
           const style = getToolStyle(node.toolName)
@@ -373,6 +412,7 @@ export function WorkflowGraph({ events }: WorkflowGraphProps) {
           )
         })}
       </div>
+      )}
     </section>
   )
 }

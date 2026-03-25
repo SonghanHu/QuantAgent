@@ -11,11 +11,19 @@ export type ArtifactSummary = {
   shape?: number[]
 }
 
+export type AgentScriptSummary = {
+  id: string
+  filename: string
+  label: string
+  size_bytes?: number
+}
+
 export type WorkspaceManifest = {
   run_id: string
   workspace_dir: string
   summary: string
   artifacts: Record<string, ArtifactSummary>
+  agent_scripts?: AgentScriptSummary[]
 }
 
 export type ArtifactPreview =
@@ -30,4 +38,10 @@ export type ArtifactPreview =
       shape: number[]
       columns: string[]
       preview_rows: Record<string, unknown>[]
+    }
+  | {
+      artifact_name: string
+      kind: 'text'
+      language?: string
+      content: string
     }
