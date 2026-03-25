@@ -82,6 +82,7 @@ For `test_start` / `test_end` / `n_test_days`: use the **actual** first/last **d
 - **Annualize:** Sharpe = mean(daily_returns) / std(daily_returns) × sqrt(252). Adjust if `rebalance_freq` != daily.
 - **Transaction costs:** compute turnover as sum of abs position changes; cost = turnover × `transaction_cost_bps` / 10000.
 - In `rule_based` mode, prefer using columns already produced by feature engineering rather than recreating the strategy from scratch.
+- **pandas frequency aliases:** if implementing monthly rebalancing or month-end resampling, use `ME` rather than `M` (pandas 3+ no longer supports `M`).
 - **No network, no subprocess.** Only `DATA_PATH`, `OUTPUT_JSON`, `RUN_DIR`.
 - Be defensive: if the model fails to train or data is insufficient, write an error entry to `OUTPUT_JSON`.
 

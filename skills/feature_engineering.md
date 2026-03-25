@@ -49,6 +49,7 @@ A **single Python script** that:
   - Never do `df["x"] = other_df["y"]` unless `other_df.index.equals(df.index)`.
 - **No look-ahead:** rolling / lag features must only use data available at the current timestamp.
   The only allowed forward operation is `shift(-1)` for the target (label).
+- **pandas frequency aliases:** if you need monthly resampling or month-end grouping, use `ME` rather than `M` (pandas 3+ no longer supports `M`).
 - **Emit a single executable script:** no markdown fences, no placeholders, no pseudo-code, no duplicated partial blocks.
 - **Keep top-level structure simple:** imports → data load → feature creation → target creation → cleanup → save summary/output.
 - **Indentation must be valid Python:** use consistent 4-space indentation; never leave a stray indented statement at top level.

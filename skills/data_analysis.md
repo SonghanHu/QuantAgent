@@ -21,6 +21,7 @@ Optional: `matplotlib` only if you **save** a figure under the same run director
 
 - Be defensive: catch load errors and write them into `OUTPUT_JSON["error"]`.
 - Keep runtime modest (avoid O(n²) on huge tables unless sampled).
+- **pandas frequency aliases:** for month-end logic use `ME`, not `M` (pandas 3+ rejects `M`). If you resample monthly, prefer `resample("ME")`; for explicit month-end offsets use the modern alias / API rather than deprecated `M`.
 
 ## Inputs you can assume (injected)
 

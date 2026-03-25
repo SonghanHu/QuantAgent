@@ -73,6 +73,7 @@ A **single Python script** that:
 ## Rules
 
 - **No look-ahead:** all alphas use only data available at time t. Only `shift(-1)` for target.
+- **pandas frequency aliases:** if you resample to month-end or use monthly buckets, use `ME` rather than deprecated `M` (pandas 3+ rejects `M`).
 - **No network, no subprocess.** Only `DATA_PATH`, `OUTPUT_PATH`, `OUTPUT_JSON`.
 - Allowed imports: `pandas`, `numpy`, `json`, `pathlib`, `sys`, `warnings`, `scipy.stats` (for rank correlation).
 - Do **not** rename or drop `TARGET_COLUMN`.
