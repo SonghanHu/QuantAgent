@@ -24,6 +24,7 @@ from .analysis_skill import (
     _tail,
     _validate_script,
     parse_script_with_retry,
+    prior_script_revision_from_disk,
     read_skill,
 )
 
@@ -64,7 +65,8 @@ def execute_alpha_skill(
     if not skill.strip():
         raise FileNotFoundError("Skill not found: skills/alpha_engineering.md")
 
-    run_id = uuid.uuid4().hex[:12]
+    rid = (session_run_id or "").strip()
+    run_id = rid[:12] if rid else uuid.uuid4().hex[:12]
     run_dir = ALPHA_RUNS / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     output_json = run_dir / "summary.json"
@@ -101,6 +103,14 @@ SEARCH_CONTEXT = {repr(search_context[:4000])}
     )
     if search_context.strip():
         user += f"\n## Research context from web search\n\n{search_context[:3000]}\n"
+
+    rev_block = (revision_context or "").strip() or prior_script_revision_from_disk(script_path)
+    if rev_block:
+        user += (
+            "\n\n## Prior attempt (same alpha-engineering session)\n\n"
+            f"{rev_block}\n\n"
+            "Revise or extend the prior script for the alpha plan above; reuse working logic."
+        )
 
     cli = client or _openai_client()
     parsed = parse_script_with_retry(

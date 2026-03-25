@@ -27,6 +27,7 @@ from .analysis_skill import (
     _tail,
     _validate_script,
     parse_script_with_retry,
+    prior_script_revision_from_disk,
     read_skill,
 )
 
@@ -56,11 +57,16 @@ def execute_feature_skill(
     model: str | None = None,
     client: OpenAI | None = None,
     timeout_sec: int = 120,
+    session_run_id: str | None = None,
+    revision_context: str | None = None,
 ) -> dict[str, Any]:
     """
     Given a FeaturePlan and input data path, generate and run a feature-engineering script.
 
     Returns dict with ``returncode``, ``output_path`` (enriched parquet), ``summary``, etc.
+
+    Use ``session_run_id`` (e.g. workspace run id) so retries overwrite the same ``feature_eng.py``.
+    Optional ``revision_context`` or an existing on-disk script seeds iterative fixes.
     """
     load_dotenv()
     m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
@@ -71,7 +77,8 @@ def execute_feature_skill(
     if not skill.strip():
         raise FileNotFoundError("Skill not found: skills/feature_engineering.md")
 
-    run_id = uuid.uuid4().hex[:12]
+    rid = (session_run_id or "").strip()
+    run_id = rid[:12] if rid else uuid.uuid4().hex[:12]
     run_dir = FEATURE_RUNS / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     output_json = run_dir / "summary.json"
@@ -97,7 +104,9 @@ TARGET_COLUMN = {repr(target_column)}
         "Follow the skill specification exactly. Use only allowed imports. "
         "The preamble defining DATA_PATH, OUTPUT_PATH, OUTPUT_JSON, RUN_DIR, FEATURE_PLAN_JSON, TARGET_COLUMN "
         "will be prepended for you. "
-        "Return one complete script with consistent 4-space indentation and no stray indented top-level lines."
+        "Return one complete script with consistent 4-space indentation and no stray indented top-level lines. "
+        "If you use np.select or np.where: every choice and default must share one numeric dtype—never mix "
+        "string ticker labels with default=np.nan."
     )
     user = (
         f"## Skill\n\n{skill}\n\n"
@@ -105,57 +114,94 @@ TARGET_COLUMN = {repr(target_column)}
         f"## Target column\n\n{feature_plan.get('target_column', 'target')}\n\n"
         f"## Data file\n\n{data_path}\n"
     )
+    rev_block = (revision_context or "").strip() or prior_script_revision_from_disk(script_path)
+    if rev_block:
+        user += (
+            "\n\n## Prior attempt (same feature-engineering session)\n\n"
+            f"{rev_block}\n\n"
+            "Revise or extend the prior script for the feature plan above; reuse working logic."
+        )
 
     cli = client or _openai_client()
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    last_syntax_error: str | None = None
+    max_runtime_fixes = 3
+    proc: subprocess.CompletedProcess[str] | None = None
     full_source = ""
-    for attempt in range(3):
-        parsed = parse_script_with_retry(cli, m, messages)
-        body = _clean_script(parsed.script)
-        _validate_script(body)
-        full_source = preamble + "\n\n" + body + "\n"
-        try:
-            _validate_python_syntax(full_source)
-            last_syntax_error = None
+
+    for runtime_round in range(max_runtime_fixes):
+        for syn_attempt in range(3):
+            parsed = parse_script_with_retry(cli, m, messages)
+            body = _clean_script(parsed.script)
+            _validate_script(body)
+            full_source = preamble + "\n\n" + body + "\n"
+            try:
+                _validate_python_syntax(full_source)
+                break
+            except SyntaxError as exc:
+                err = f"{exc.__class__.__name__}: {exc}"
+                if syn_attempt == 2:
+                    return {
+                        "skill": "feature_engineering",
+                        "run_id": run_id,
+                        "script_path": str(script_path.relative_to(REPO_ROOT)),
+                        "output_path": None,
+                        "returncode": 1,
+                        "stdout": "",
+                        "stderr": err,
+                        "summary": {"error": "syntax_validation_failed", "detail": err},
+                        "data_path": data_path,
+                    }
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous script does not parse as Python. "
+                            f"Fix this exact syntax problem and return a full corrected script only: {err}. "
+                            "Pay special attention to indentation and top-level block structure."
+                        ),
+                    },
+                )
+
+        script_path.write_text(full_source, encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(script_path)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            env={**os.environ, "PYTHONUTF8": "1"},
+        )
+        if proc.returncode == 0:
             break
-        except SyntaxError as exc:
-            last_syntax_error = f"{exc.__class__.__name__}: {exc}"
-            if attempt == 2:
-                return {
-                    "skill": "feature_engineering",
-                    "run_id": run_id,
-                    "script_path": str(script_path.relative_to(REPO_ROOT)),
-                    "output_path": None,
-                    "returncode": 1,
-                    "stdout": "",
-                    "stderr": last_syntax_error,
-                    "summary": {"error": "syntax_validation_failed", "detail": last_syntax_error},
-                    "data_path": data_path,
-                }
+        if runtime_round < max_runtime_fixes - 1:
+            tail_err = _tail(proc.stderr, 6_000)
             messages.append(
                 {
                     "role": "user",
                     "content": (
-                        "Your previous script does not parse as Python. "
-                        f"Fix this exact syntax problem and return a full corrected script only: {last_syntax_error}. "
-                        "Pay special attention to indentation and top-level block structure."
+                        "The script failed when executed. Return a full corrected script only.\n\n"
+                        f"```\n{tail_err}\n```\n\n"
+                        "If you use np.select: choicelist values must match the default dtype "
+                        "(e.g. all floats); do not mix ticker strings with default=np.nan."
                     ),
-                }
+                },
             )
-    script_path.write_text(full_source, encoding="utf-8")
 
-    proc = subprocess.run(
-        [sys.executable, str(script_path)],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=timeout_sec,
-        env={**os.environ, "PYTHONUTF8": "1"},
-    )
+    if proc is None:
+        return {
+            "skill": "feature_engineering",
+            "run_id": run_id,
+            "script_path": str(script_path.relative_to(REPO_ROOT)),
+            "output_path": None,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "internal_error: no subprocess result",
+            "summary": None,
+            "data_path": data_path,
+        }
 
     summary: dict[str, Any] | None = None
     if output_json.is_file():

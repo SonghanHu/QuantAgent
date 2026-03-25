@@ -98,6 +98,24 @@ def parse_script_with_retry(
     raise last_exc  # type: ignore[misc]
 
 
+def prior_script_revision_from_disk(script_path: Path) -> str | None:
+    """If a script file already exists (e.g. retried subtask), load it so the LLM can revise instead of rewriting."""
+    if not script_path.is_file():
+        return None
+    try:
+        text = script_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if len(text) > 7_000:
+        text = text[:3_500] + "\n\n...[truncated]...\n\n" + text[-3_000:]
+    return (
+        "### Prior script from this session (on disk)\n\n```python\n"
+        + text
+        + "\n```\n\n"
+        "Revise to fix runtime, logic, or schema errors; keep working structure when possible."
+    )
+
+
 def _openai_client() -> OpenAI:
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
@@ -117,9 +135,14 @@ def execute_analysis_skill(
     model: str | None = None,
     client: OpenAI | None = None,
     timeout_sec: int = 120,
+    session_run_id: str | None = None,
+    revision_context: str | None = None,
 ) -> dict[str, Any]:
     """
     Load skill markdown, ask the model for a script, write under ``data/analysis_runs/<id>/``, run with current interpreter.
+
+    Pass ``session_run_id`` to reuse the same run directory across iterations (overwrites ``analysis.py``).
+    Pass ``revision_context`` (e.g. prior script + stderr) so the model can fix instead of rewriting from scratch.
     """
     load_dotenv()
     m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
@@ -130,7 +153,8 @@ def execute_analysis_skill(
     if not skill.strip():
         raise FileNotFoundError(f"Skill not found: skills/{skill_name}.md")
 
-    run_id = uuid.uuid4().hex[:12]
+    rid = (session_run_id or "").strip()
+    run_id = rid[:12] if rid else uuid.uuid4().hex[:12]
     run_dir = ANALYSIS_RUNS / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     output_json = run_dir / "summary.json"
@@ -155,6 +179,13 @@ RUN_DIR = Path({repr(str(run_dir))})
         f"## Resolved data file\n\n"
         f"{data_path or 'None (build synthetic or minimal demo data in-script).'}\n"
     )
+    if revision_context and revision_context.strip():
+        user += (
+            "\n\n## Prior attempt (same analysis session)\n\n"
+            f"{revision_context.strip()}\n\n"
+            "Revise or extend the prior script to satisfy the instruction above. "
+            "Reuse working logic; fix errors; do not discard useful code unless the instruction requires it."
+        )
 
     cli = client or _openai_client()
     parsed = parse_script_with_retry(

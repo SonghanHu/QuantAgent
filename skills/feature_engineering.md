@@ -50,6 +50,12 @@ A **single Python script** that:
 - **No look-ahead:** rolling / lag features must only use data available at the current timestamp.
   The only allowed forward operation is `shift(-1)` for the target (label).
 - **pandas frequency aliases:** if you need monthly resampling or month-end grouping, use `ME` rather than `M` (pandas 3+ no longer supports `M`).
+- **NumPy `np.select` / mixed dtypes:** `np.select(conditions, choices, default=...)` requires every
+  array in `choices` and the `default` value to share a **common dtype**. Do **not** mix **strings**
+  (e.g. ticker names like `"GLD"`) with `default=np.nan` (float): NumPy raises `TypeError`. Fix by:
+  using **numeric codes only** in `choices` (e.g. `0.0`, `1.0`, `2.0` for which asset is top), or
+  `default=np.nan` with **all** choices as `float`/`np.float64`, or build the column with
+  `pd.Series`/`map` without mixing str and float in one `np.select` call.
 - **Emit a single executable script:** no markdown fences, no placeholders, no pseudo-code, no duplicated partial blocks.
 - **Keep top-level structure simple:** imports → data load → feature creation → target creation → cleanup → save summary/output.
 - **Indentation must be valid Python:** use consistent 4-space indentation; never leave a stray indented statement at top level.

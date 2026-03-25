@@ -20,13 +20,13 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 from .analysis_skill import (
-    FORBIDDEN_SNIPPETS,
     REPO_ROOT,
     GeneratedAnalysisScript,
     _clean_script,
     _tail,
     _validate_script,
     parse_script_with_retry,
+    prior_script_revision_from_disk,
     read_skill,
 )
 
@@ -73,12 +73,16 @@ def execute_backtest_skill(
     model: str | None = None,
     client: OpenAI | None = None,
     timeout_sec: int = 180,
+    session_run_id: str | None = None,
+    revision_context: str | None = None,
 ) -> dict[str, Any]:
     """
     Generate and run a backtest script using the ``backtest`` skill.
 
     ``backtest_config`` holds strategy hyperparameters; ``strategy_context`` tells
     the script whether to run in model-based or rule-based mode.
+
+    Use ``session_run_id`` so retries reuse the same ``backtest.py`` path.
     """
     load_dotenv()
     m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
@@ -89,7 +93,8 @@ def execute_backtest_skill(
     if not skill.strip():
         raise FileNotFoundError("Skill not found: skills/backtest.md")
 
-    run_id = uuid.uuid4().hex[:12]
+    rid = (session_run_id or "").strip()
+    run_id = rid[:12] if rid else uuid.uuid4().hex[:12]
     run_dir = BACKTEST_RUNS / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     output_json = run_dir / "summary.json"
@@ -124,6 +129,13 @@ MODEL_OUTPUT_JSON = {repr(model_str)}
         f"## Strategy context\n\n{context_str}\n\n"
         f"## Data file\n\n{data_path}\n"
     )
+    rev_block = (revision_context or "").strip() or prior_script_revision_from_disk(script_path)
+    if rev_block:
+        user += (
+            "\n\n## Prior attempt (same backtest session)\n\n"
+            f"{rev_block}\n\n"
+            "Revise or extend the prior script for the configuration above; reuse working logic."
+        )
 
     cli = client or _openai_client()
     parsed = parse_script_with_retry(

@@ -120,6 +120,7 @@ def run_backtest(
         strategy_context,
         data_path=data_path,
         timeout_sec=timeout_sec,
+        session_run_id=workspace.run_id,
     )
 
     # Persist any structured summary written by the script (including {"error": ...}).

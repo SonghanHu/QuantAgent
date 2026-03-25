@@ -70,6 +70,7 @@ def build_alphas(
         data_path=data_path,
         search_context=search_context,
         timeout_sec=timeout_sec,
+        session_run_id=workspace.run_id,
     )
 
     if result.get("returncode") == 0 and result.get("output_path"):

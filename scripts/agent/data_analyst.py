@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from collections.abc import Callable
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -97,6 +99,37 @@ def _summarize_result(result: dict[str, Any], *, max_stdout: int = 3000) -> str:
     return "\n\n".join(parts)
 
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _revision_context_from_previous(prev: AnalysisRound) -> str:
+    """Prior script + errors so the next LLM call can revise instead of starting cold."""
+    parts: list[str] = []
+    r = prev.result
+    sp = r.get("script_path")
+    if isinstance(sp, str) and sp.strip():
+        try:
+            path = _REPO_ROOT / sp
+            if path.is_file():
+                text = path.read_text(encoding="utf-8")
+                if len(text) > 7_000:
+                    text = text[:3_500] + "\n\n...[truncated]...\n\n" + text[-3_000:]
+                parts.append("### Prior script (on disk, including injected preamble)\n\n```python\n" + text + "\n```")
+        except OSError:
+            pass
+    rc = r.get("returncode")
+    parts.append(f"### Prior run\n\nreturncode={rc}")
+    err = r.get("stderr") or ""
+    if err:
+        parts.append("### stderr (tail)\n\n```\n" + str(err)[-2_500:] + "\n```")
+    if rc not in (0, None):
+        out = r.get("stdout") or ""
+        if out:
+            parts.append("### stdout (tail)\n\n```\n" + str(out)[-1_500:] + "\n```")
+    parts.append(f"### Prior instruction\n\n{prev.instruction[:2_000]}")
+    return "\n\n".join(parts)
+
+
 def _history_digest(rounds: list[AnalysisRound], *, max_chars: int = 6000) -> str:
     """Compressed earlier rounds so the judge has context without blowing token budget."""
     lines: list[str] = []
@@ -143,6 +176,7 @@ def run_data_analyst(
         "and correlations with likely target columns. "
         "Flag any data quality issues."
     )
+    analysis_session_id = uuid.uuid4().hex[:12]
 
     for round_num in range(1, max_rounds + 1):
         print(f"  [data_analyst] round {round_num}: {instruction[:80]}...")
@@ -155,12 +189,18 @@ def run_data_analyst(
                 }
             )
 
+        revision_context: str | None = None
+        if result.rounds:
+            revision_context = _revision_context_from_previous(result.rounds[-1])
+
         analysis = execute_analysis_skill(
             instruction,
             data_path=data_path,
             model=code_model,
             client=cli,
             timeout_sec=timeout_sec,
+            session_run_id=analysis_session_id,
+            revision_context=revision_context,
         )
         ar = AnalysisRound(round_num=round_num, instruction=instruction, result=analysis)
 
