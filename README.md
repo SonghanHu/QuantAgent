@@ -8,7 +8,7 @@ Natural-language **research agent** for quant workflows: decompose a goal into s
 
 QuantAgent has four layers:
 
-1. A React dashboard submits a goal, streams progress, previews workspace artifacts, and (after `run_done`) offers post-run Q&A grounded in those artifacts.
+1. A React dashboard submits a goal, streams progress, and uses **tabbed panels** (**Activity** = pipeline + live log, **Workspace** = artifacts + **LLM-generated Python scripts** preview, **Report** = final report + post-run Q&A). After `run_done`, **Ask about this run** stays grounded in workspace artifacts.
 2. A FastAPI server starts runs, persists run metadata, and relays events over WebSocket.
 3. The workflow orchestrator decomposes the goal into tool-shaped subtasks, executes them in dependency order, and records artifacts plus status.
 4. The tool layer mixes fixed implementations (`yfinance`, sklearn, SQLite/workspace IO) with skill-driven code generation for analysis, feature engineering, alpha construction, and backtesting.
@@ -18,7 +18,7 @@ Two pipeline styles are first-class:
 - **Predictive / ML**: `web_search` → `run_data_loader` → `run_data_analyst` → `build_features` or `build_alphas` → `train_model` → `run_backtest` → `evaluate_strategy`
 - **Rule-based**: `web_search` → `run_data_loader` → `run_data_analyst` → `build_features` → `run_backtest` → `evaluate_strategy`
 
-The orchestrator also has a lightweight recovery loop: when a tool fails, it can write `debug_notes`, emit a suggested recovery step, retry the blocked subtask once, and publish `step_think` hints for the next stage.
+The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_backtest` depends on feature/model steps), **halts downstream subtasks** after a hard failure (configurable), runs **automatic subtask retries** with the error appended to the description, optionally **replans** with `revise_plan` (full `TaskBreakdown`, preserving successful step ids), and can still run the debug agent + recovery + one retry when `DEBUG_AGENT_ON_FAILURE=1`. After each step it may emit `step_think` hints.
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
@@ -26,9 +26,10 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │                                                                   │
 │  GoalInput ──▶ POST /api/run ──▶ run_id                          │
 │  useAgentSocket ◀── WebSocket /ws/{run_id} ◀── EventBus          │
-│  ArtifactPanel ──▶ GET /api/workspace/{run_id}/{artifact}        │
+│  GET /api/workspace/{id} (manifest + agent_scripts)             │
+│  ArtifactPanel ──▶ artifacts + GET …/agent-scripts/{id} (code) │
 │  ReportPanel ──▶ POST /api/run/{run_id}/chat (after run_done)    │
-│  ProgressBar · LogPanel · WorkflowGraph · ReportPanel            │
+│  Tabs: Activity · Workspace · Report (keys 1–3)                  │
 └──────────────────────────┬────────────────────────────────────────┘
                            │  Vite proxy (dev) / same origin (prod)
 ┌──────────────────────────▼────────────────────────────────────────┐
@@ -38,7 +39,8 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │  POST /api/clarify  ──▶ Pre-execution goal clarification (LLM)   │
 │  POST /api/run/{id}/chat ──▶ Post-run Q&A (workspace context)     │
 │  WS   /ws/{run_id}  ──▶ EventBus.subscribe(replay=True)         │
-│  GET  /api/workspace/… ──▶ Workspace.list_artifacts / load       │
+│  GET  /api/workspace/{id} ──▶ manifest (+ agent_scripts list)      │
+│  GET  /api/workspace/{id}/{artifact} | …/agent-scripts/{key}    │
 │  GET  /api/health                                                │
 │  Static: frontend/dist (prod) or proxy to :5173 (dev)            │
 └──────────────────────────┬────────────────────────────────────────┘
@@ -47,13 +49,12 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │  Orchestration  (scripts/workflow_demo.py)                        │
 │                                                                   │
 │  [optional] interactive clarification (--interactive / API)       │
-│  decompose_task (LLM, 4-8 subtasks) ──▶ TaskBreakdown ──▶ topo  │
-│  for subtask in plan:                                            │
-│      resolve_subtask_tool (LLM / heuristic)                      │
-│      run_tool(tool_name, **kwargs)                               │
-│      on failure: debug → recovery step → one retry               │
-│      emit step_think hints after each step                       │
-│      emit events ──▶ EventBus ──▶ WebSocket ──▶ Browser          │
+│  decompose_task ──▶ repair_plan_dependencies ──▶ TaskBreakdown │
+│  loop: topo order; skip subtasks already ok after replan          │
+│  for subtask: resolve_subtask_tool → run_tool                     │
+│  on failure: N× retry w/ error in description → [debug path] →   │
+│      revise_plan (optional) → restart topo; else halt downstream  │
+│  emit step_think after each step (unless STEP_THINKING=0)         │
 │  generate_report (LLM) ──▶ final_report.json + report.md        │
 │  save final state ──▶ SQLite + Workspace                         │
 └──────────────────────────┬────────────────────────────────────────┘
@@ -87,6 +88,7 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │    └── report.md  ◀── human-readable final report                │
 │  SQLite: data/agent.db  (runs + log_entries)                     │
 │  Skills output: data/{analysis,feature,alpha,backtest}_runs/     │
+│    (same run_id as workspace → stable paths + UI script preview) │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -114,7 +116,7 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 .
 ├── frontend/                   # React SPA
 │   ├── src/
-│   │   ├── App.tsx             # Main shell: goal, progress, logs, artifacts, report
+│   │   ├── App.tsx             # Tabbed shell: Activity / Workspace / Report
 │   │   ├── hooks/
 │   │   │   └── useAgentSocket.ts   # WebSocket + event stream
 │   │   └── components/
@@ -153,8 +155,8 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │   │   ├── debug_agent.py      # Failure diagnosis + structured recovery hints
 │   │   ├── step_thinking.py    # Post-step reflection for next-tool guidance
 │   │   ├── report_gen.py       # LLM final report → JSON + Markdown
-│   │   ├── post_run_chat.py    # Build context pack + chat after run (API)
-│   │   └── plan_revision.py    # revise_plan (placeholder)
+│   │   ├── post_run_chat.py    # Build context pack + chat (max_completion_tokens)
+│   │   └── plan_revision.py    # revise_plan: LLM replan after failure
 │   ├── llm/
 │   │   ├── task_decompose.py   # NL → TaskBreakdown (4-8 tool-aligned subtasks)
 │   │   └── yfinance_spec.py    # NL → YFinanceFetchSpec
@@ -313,7 +315,7 @@ uv run python scripts/llm/task_decompose.py "Your research goal"
 - `train_model` — aligns with `feature_plan.target_column` from workspace; auto-derives target from price if missing; time-ordered split for datetime data
 - `run_backtest` — pre-checks data/model column alignment in `model_based` mode and falls back to `rule_based` when no `model_output` exists
 - `evaluate_strategy` — can review backtest-only rule-based runs; no longer treats missing `model_output` as automatically incomplete
-- `executor` / workflow — detect tool-returned error dicts, emit debug + recovery events, and can retry a failed subtask once after recovery
+- `executor` / workflow — detect tool-returned error dicts, emit debug + recovery events, **subtask retries** (`SUBTASK_FAILURE_RETRIES`), optional **replan** (`REPLAN_MAX`), and **halt** downstream on hard failure when `PIPELINE_HALT_ON_FAILURE=1`
 
 ---
 
@@ -374,7 +376,9 @@ Each run produces:
 - **`evaluation.json`** — LLM strategy verdict (rating, strengths, weaknesses, next steps)
 - **`backtest_results.json`** — Sharpe, drawdown, equity curve, turnover, etc.
 - **`debug_notes.json`** — structured failure analysis and suggested recovery actions when debugging runs
-- All workspace artifacts accessible via `GET /api/workspace/{run_id}/{name}`
+- **`GET /api/workspace/{run_id}`** — manifest (artifact list, sizes, **`agent_scripts`**: id, path, kind, mtime)
+- **`GET /api/workspace/{run_id}/{artifact}`** — JSON artifact body
+- **`GET /api/workspace/{run_id}/agent-scripts/{script_id}`** — text preview of generated `.py` under `data/*_runs/{run_id}/`
 - **Post-run chat** — same run id; see [Post-run chat (dashboard)](#post-run-chat-dashboard) (not persisted as a separate artifact by default)
 
 ---
@@ -387,11 +391,13 @@ Each run produces:
 |-------|------|-----------------|
 | `run_start` | Run begins | `run_id`, `goal` |
 | `decompose_done` | Plan ready | `total_subtasks`, `subtasks` |
-| `workflow_topo_order` | Topological execution order resolved | `order` |
+| `workflow_topo_order` | Topological execution order resolved | `order`, optional `replan_round` |
 | `subtask_start` | Subtask starts | `subtask_title`, `position`, `total` |
 | `subtask_done` | Subtask ends | `status`, `summary`, `output` |
+| `subtask_retry` | Same subtask retried after failure | `subtask_id`, `attempt`, `error_excerpt` |
 | `workspace_update` | Artifact changed | `artifact_name` |
-| `debug_agent_done` | After automatic or tool debug analysis | `summary`, `category`, `subtask_id`, `debug_error` |
+| `debug_agent_done` | After automatic or tool debug analysis | `summary`, `category`, `subtask_id`, `debug_error`, `debug_message` |
+| `plan_replan` | `revise_plan` produced a new breakdown | `replan_round`, `subtasks` |
 | `recovery_step` | Recovery tool runs after a failure | `tool_name`, `reason`, `subtask_id` |
 | `step_think` | After each subtask (incl. skip) | `reasoning`, `tools_to_consider`, `note_for_next_step`, `next_subtask_id` |
 | `data_analyst_round` | Analyst loop | `stage`, `round`, `ready`, `reasoning` |
@@ -422,6 +428,15 @@ AGENT_DB_PATH=./data/agent.db
 
 # After each subtask, run step reflection (which tools matter next, e.g. web_search before load_data). Default on.
 # STEP_THINKING=0
+
+# Pipeline: halt downstream after hard failure (1) or continue (0). Default 1.
+# PIPELINE_HALT_ON_FAILURE=1
+
+# Retries for the same subtask with error text appended to the description (after first failure).
+# SUBTASK_FAILURE_RETRIES=2
+
+# Max LLM replan rounds after retries / debug (full TaskBreakdown, preserve completed step ids).
+# REPLAN_MAX=1
 ```
 
 ---
@@ -430,7 +445,7 @@ AGENT_DB_PATH=./data/agent.db
 
 | Item | Status |
 |------|--------|
-| Mid-run `revise_plan` | Placeholder |
+| Mid-run `revise_plan` | Basic LLM replan on failure (`REPLAN_MAX`) |
 | Metric-driven auto-iteration (e.g. Sharpe threshold → retry) | Planned |
 | Multi-asset panel support | Planned |
 | Native classification training in `train_model` | Planned |
