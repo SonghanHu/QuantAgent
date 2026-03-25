@@ -1,0 +1,27 @@
+.git
+.gitignore
+.cursor
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+env
+.env
+.env.*
+!.env.example
+
+# Local runtime / large artifacts
+data/
+
+# Frontend dev deps (rebuilt in image)
+frontend/node_modules
+frontend/dist
+
+# IDE & misc
+terminals
+agent-transcripts

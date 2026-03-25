@@ -1,0 +1,21 @@
+# QuantAgent: FastAPI + built SPA on port 8000
+#
+#   cp .env.example .env   # set at least OPENAI_API_KEY
+#   docker compose up --build
+#
+# Open http://localhost:8000
+
+services:
+  quantagent:
+    build: .
+    image: quantagent:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - quantagent-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  quantagent-data:

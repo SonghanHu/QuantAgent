@@ -189,6 +189,8 @@ The orchestrator also has a lightweight recovery loop: when a tool fails, it can
 │   ├── alpha_runs/{id}/
 │   └── backtest_runs/{id}/
 │
+├── Dockerfile
+├── docker-compose.yml
 ├── pyproject.toml
 └── .env.example
 ```
@@ -246,6 +248,25 @@ uv run uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
 Open `http://localhost:8000` (API + static UI, no dev proxy).
+
+### Docker
+
+Build the same single-port image (frontend `npm run build` + Python `uv sync`) and run with persisted `data/`:
+
+```bash
+cp .env.example .env   # at least OPENAI_API_KEY
+docker compose up --build
+```
+
+Or without Compose:
+
+```bash
+docker build -t quantagent .
+mkdir -p data
+docker run --rm -p 8000:8000 --env-file .env -v "$(pwd)/data:/app/data" quantagent
+```
+
+Open `http://localhost:8000`. Mount `/app/data` so workspaces and `agent.db` survive restarts (Compose uses a named volume for the same path).
 
 ### 4. CLI
 
