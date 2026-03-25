@@ -32,6 +32,7 @@ function App() {
   const [isStarting, setIsStarting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [showClarify, setShowClarify] = useState(false)
+  const [clarifySession, setClarifySession] = useState(0)
   const [activeTab, setActiveTab] = useState<MainTab>('activity')
   const [followLatestArtifact, setFollowLatestArtifact] = useState(true)
   const [artifactSelectionLocked, setArtifactSelectionLocked] = useState(false)
@@ -169,6 +170,8 @@ function App() {
   }, [])
 
   function handleRunClick() {
+    if (!goal.trim() || isStarting || isRunning) return
+    setClarifySession((s) => s + 1)
     setShowClarify(true)
   }
 
@@ -178,12 +181,7 @@ function App() {
     void doStartRun(refinedGoal)
   }
 
-  function handleClarifySkip() {
-    setShowClarify(false)
-    void doStartRun(goal)
-  }
-
-  function handleClarifyCancel() {
+  function handleClarifyAbort() {
     setShowClarify(false)
   }
 
@@ -216,16 +214,22 @@ function App() {
   return (
     <main className="min-h-screen bg-[radial-gradient(ellipse_120%_80%_at_50%_-20%,rgba(56,189,248,0.14),transparent),linear-gradient(180deg,#0c1222,#030712)] px-3 py-6 text-slate-100 sm:px-5 sm:py-8">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
-        <GoalInput goal={goal} isRunning={isStarting || isRunning} onGoalChange={setGoal} onSubmit={handleRunClick} />
-
-        {showClarify && !isStarting && !isRunning && (
-          <ClarifyDialog
-            goal={goal}
-            onConfirm={handleClarifyConfirm}
-            onSkip={handleClarifySkip}
-            onCancel={handleClarifyCancel}
-          />
-        )}
+        <GoalInput
+          goal={goal}
+          isRunning={isStarting || isRunning}
+          isClarifying={showClarify && !isStarting && !isRunning}
+          onGoalChange={setGoal}
+          onSubmit={handleRunClick}
+          footer={
+            <ClarifyDialog
+              open={showClarify && !isStarting && !isRunning}
+              clarifySession={clarifySession}
+              goal={goal}
+              onConfirm={handleClarifyConfirm}
+              onAbort={handleClarifyAbort}
+            />
+          }
+        />
 
         {errorMessage && (
           <div className="rounded-xl border border-rose-400/25 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">

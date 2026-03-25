@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 type ClarifyResult = {
   understood: boolean
@@ -10,17 +10,20 @@ type ClarifyResult = {
 
 type ClarifyDialogProps = {
   goal: string
+  /** When true, panel is shown and clarification runs automatically (no separate “start” step). */
+  open: boolean
+  /** Increment when user clicks Run so each attempt triggers a fresh clarify (StrictMode-safe). */
+  clarifySession: number
   onConfirm: (refinedGoal: string) => void
-  onSkip: () => void
-  onCancel: () => void
+  /** User backs out of the clarify flow without starting a run. */
+  onAbort: () => void
 }
 
-export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDialogProps) {
+export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }: ClarifyDialogProps) {
   const [conversation, setConversation] = useState<{ role: string; content: string }[]>([])
   const [result, setResult] = useState<ClarifyResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [answer, setAnswer] = useState('')
-  const [started, setStarted] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function clarify(conv: { role: string; content: string }[]) {
@@ -43,11 +46,42 @@ export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDial
     }
   }
 
-  function handleStart() {
-    setStarted(true)
+  useEffect(() => {
+    if (!open) {
+      setConversation([])
+      setResult(null)
+      setError(null)
+      setAnswer('')
+      setLoading(false)
+      return
+    }
+    let alive = true
+    setLoading(true)
+    setError(null)
     setResult(null)
-    void clarify([])
-  }
+    ;(async () => {
+      try {
+        const res = await fetch('/api/clarify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ goal, conversation: undefined }),
+        })
+        if (!res.ok) throw new Error(`clarify failed: ${res.status}`)
+        const data = (await res.json()) as ClarifyResult
+        if (!alive) return
+        setResult(data)
+      } catch (err: unknown) {
+        if (!alive) return
+        setResult(null)
+        setError(err instanceof Error ? err.message : 'Unable to clarify the goal right now.')
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [open, goal, clarifySession])
 
   function handleAnswer() {
     if (!answer.trim() || !result) return
@@ -82,174 +116,125 @@ export function ClarifyDialog({ goal, onConfirm, onSkip, onCancel }: ClarifyDial
     void clarify(conversation)
   }
 
-  if (!started) {
-    return (
-      <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-base font-medium text-cyan-300">Pre-run clarification</div>
-            <div className="text-sm text-slate-400">Let the agent understand your goal before executing</div>
-          </div>
-          <div className="flex gap-2">
+  if (!open) return null
+
+  return (
+    <div className="space-y-3 border-t border-white/10 pt-4">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-medium text-cyan-300">目标澄清（必填）</div>
+          <div className="text-xs text-slate-500">运行前须完成此步；与下方 Activity / Workspace 标签页无关。</div>
+        </div>
+        <button
+          type="button"
+          className="shrink-0 rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-400 transition hover:border-white/20 hover:text-slate-200"
+          onClick={onAbort}
+          disabled={loading}
+        >
+          返回编辑目标
+        </button>
+      </div>
+
+      {error && (
+        <div className="space-y-3 rounded-2xl border border-rose-400/20 bg-rose-400/5 p-4">
+          <div className="text-sm font-medium text-rose-300">澄清服务不可用</div>
+          <p className="text-sm text-slate-300">
+            {error}。请重试，或返回修改目标文案；无法在未完成澄清时启动任务。
+          </p>
+          <div className="flex flex-wrap gap-2">
             <button
-              className="rounded-full border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:border-white/20"
-              onClick={onCancel}
+              type="button"
+              className="rounded-xl bg-rose-400/15 px-3 py-2 text-sm font-medium text-rose-200 transition hover:bg-rose-400/25"
+              onClick={handleRetry}
             >
-              Cancel
+              重试
             </button>
             <button
-              className="rounded-full border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:border-white/20"
-              onClick={onSkip}
+              type="button"
+              className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-400 transition hover:border-white/20"
+              onClick={onAbort}
             >
-              Run now
-            </button>
-            <button
-              className="rounded-full bg-cyan-400/20 px-3 py-2 text-sm font-medium text-cyan-300 transition hover:bg-cyan-400/30"
-              onClick={handleStart}
-            >
-              Clarify goal
+              返回编辑目标
             </button>
           </div>
         </div>
-      </div>
-    )
-  }
+      )}
 
-  if (error) {
-    return (
-      <div className="space-y-3 rounded-2xl border border-rose-400/20 bg-rose-400/5 p-4">
-        <div className="text-base font-medium text-rose-300">Clarification is unavailable</div>
-        <p className="text-base text-slate-300">
-          {error}. You can retry, run with the current goal, or cancel.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="rounded-xl bg-rose-400/15 px-3 py-2.5 text-sm font-medium text-rose-200 transition hover:bg-rose-400/25"
-            onClick={handleRetry}
-          >
-            Retry
-          </button>
-          <button
-            className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-300 transition hover:border-white/20"
-            onClick={onSkip}
-          >
-            Run now
-          </button>
-          <button
-            className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-400 transition hover:border-white/20"
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (loading) {
-    return (
-      <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
-        <div className="flex items-center gap-3">
+      {loading && !error && (
+        <div className="flex items-center gap-3 rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
-          <span className="text-base text-cyan-300">Analyzing your goal...</span>
+          <span className="text-sm text-cyan-300">正在理解你的目标…</span>
         </div>
-      </div>
-    )
-  }
+      )}
 
-  if (!result) return null
-
-  if (result.understood) {
-    return (
-      <div className="space-y-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-4">
-        <div className="flex items-center gap-2">
-          <span className="text-emerald-400">✓</span>
-          <span className="text-base font-medium text-emerald-300">Goal understood</span>
-        </div>
-        {result.summary && (
-          <p className="text-base text-slate-300">{result.summary}</p>
-        )}
-        {result.assumptions.length > 0 && (
-          <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-widest text-slate-500">Assumptions</div>
-            <ul className="space-y-0.5 text-sm text-slate-400">
-              {result.assumptions.filter(Boolean).map((a, i) => (
-                <li key={i} className="flex gap-1.5">
-                  <span className="text-slate-600">•</span> {a}
-                </li>
-              ))}
-            </ul>
+      {!loading && !error && result?.understood && (
+        <div className="space-y-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-4">
+          <div className="flex items-center gap-2">
+            <span className="text-emerald-400">✓</span>
+            <span className="text-sm font-medium text-emerald-300">目标已理解</span>
           </div>
-        )}
-        <div className="flex gap-2 pt-1">
+          {result.summary && <p className="text-sm text-slate-300">{result.summary}</p>}
+          {result.assumptions.length > 0 && (
+            <div>
+              <div className="mb-1 text-xs font-medium uppercase tracking-widest text-slate-500">假设</div>
+              <ul className="space-y-0.5 text-sm text-slate-400">
+                {result.assumptions.filter(Boolean).map((a, i) => (
+                  <li key={i} className="flex gap-1.5">
+                    <span className="text-slate-600">•</span> {a}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <button
+            type="button"
             className="rounded-full bg-emerald-400/20 px-4 py-2 text-sm font-medium text-emerald-300 transition hover:bg-emerald-400/30"
             onClick={() => onConfirm(result.refined_goal || goal)}
           >
-            Use refined goal
-          </button>
-          <button
-            className="rounded-full border border-white/10 px-3 py-2 text-sm text-slate-400 transition hover:border-white/20"
-            onClick={onSkip}
-          >
-            Run original goal
-          </button>
-          <button
-            className="rounded-full border border-white/10 px-3 py-2 text-sm text-slate-400 transition hover:border-white/20"
-            onClick={onCancel}
-          >
-            Cancel
+            使用精炼目标并开始运行
           </button>
         </div>
-      </div>
-    )
-  }
+      )}
 
-  return (
-    <div className="space-y-3 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
-      <div className="text-base font-medium text-amber-300">A few questions before starting:</div>
-      <ol className="space-y-1.5">
-        {result.questions.map((q, i) => (
-          <li key={i} className="flex gap-2 text-base text-slate-300">
-            <span className="flex-shrink-0 font-medium text-amber-400">{i + 1}.</span>
-            {q}
-          </li>
-        ))}
-      </ol>
-      <div className="flex gap-2">
-        <input
-          className="flex-1 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-base text-slate-100 outline-none placeholder:text-slate-500"
-          placeholder="Your answers..."
-          value={answer}
-          onChange={(e) => setAnswer(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleAnswer()}
-        />
-        <button
-          className="rounded-xl bg-amber-400/20 px-3 py-2.5 text-sm font-medium text-amber-300 transition hover:bg-amber-400/30"
-          onClick={handleAnswer}
-          disabled={!answer.trim()}
-        >
-          Answer
-        </button>
-        <button
-          className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-400 transition hover:border-white/20"
-          onClick={handleDefaults}
-        >
-          Use defaults
-        </button>
-        <button
-          className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-300 transition hover:border-white/20"
-          onClick={onSkip}
-        >
-          Run now
-        </button>
-        <button
-          className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-500 transition hover:border-white/20"
-          onClick={onCancel}
-        >
-          Cancel
-        </button>
-      </div>
+      {!loading && !error && result && !result.understood && (
+        <div className="space-y-3 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
+          <div className="text-sm font-medium text-amber-300">开始运行前请补充：</div>
+          <ol className="space-y-1.5">
+            {result.questions.map((q, i) => (
+              <li key={i} className="flex gap-2 text-sm text-slate-300">
+                <span className="flex-shrink-0 font-medium text-amber-400">{i + 1}.</span>
+                {q}
+              </li>
+            ))}
+          </ol>
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <input
+              className="min-w-0 flex-1 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+              placeholder="在此作答…"
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAnswer()}
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-xl bg-amber-400/20 px-3 py-2 text-sm font-medium text-amber-300 transition hover:bg-amber-400/30"
+                onClick={handleAnswer}
+                disabled={!answer.trim()}
+              >
+                提交回答
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-400 transition hover:border-white/20"
+                onClick={handleDefaults}
+              >
+                全部使用默认假设
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
