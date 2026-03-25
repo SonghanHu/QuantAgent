@@ -213,6 +213,26 @@ def workspace_report_md(run_id: str) -> Any:
     return FileResponse(md_path, media_type="text/markdown", filename=f"report-{run_id}.md")
 
 
+@app.get("/api/workspace/{run_id}/files/{artifact_name}")
+def workspace_binary_file(run_id: str, artifact_name: str) -> FileResponse:
+    """Serve workspace binary artifacts (e.g. PNG equity chart)."""
+    ws = _open_workspace(run_id)
+    artifacts = ws.list_artifacts()
+    meta = artifacts.get(artifact_name)
+    if meta is None or meta.get("kind") != "image":
+        raise HTTPException(status_code=404, detail=f"image artifact not found: {artifact_name}")
+    path = ws.artifact_path(artifact_name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="file missing on disk")
+    try:
+        path.resolve().relative_to(ws.root.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid artifact path") from exc
+    suffix = path.suffix.lower()
+    media = "image/png" if suffix == ".png" else "application/octet-stream"
+    return FileResponse(path, media_type=media, filename=path.name)
+
+
 @app.get("/api/workspace/{run_id}/{artifact_name}")
 def workspace_artifact(run_id: str, artifact_name: str) -> dict[str, Any]:
     ws = _open_workspace(run_id)
@@ -241,6 +261,12 @@ def workspace_artifact(run_id: str, artifact_name: str) -> dict[str, Any]:
             "shape": list(df.shape),
             "columns": [str(c) for c in df.columns],
             "preview_rows": preview.astype(object).where(pd.notnull(preview), None).to_dict(orient="records"),
+        }
+    if meta["kind"] == "image":
+        return {
+            "artifact_name": artifact_name,
+            "kind": "image",
+            "url": f"/api/workspace/{run_id}/files/{artifact_name}",
         }
     raise HTTPException(status_code=400, detail=f"unsupported artifact kind: {meta['kind']}")
 
