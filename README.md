@@ -153,8 +153,7 @@ The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_b
 │   │   ├── clarifier.py        # Pre-execution goal clarification dialog
 │   │   ├── data_loader.py      # Iterative Yahoo spec propose/load/judge loop
 │   │   ├── analysis_skill.py   # LLM-generated EDA scripts + retry
-│   │   ├── feature_skill.py    # LLM-generated feature scripts + retry
-│   │   ├── alpha_skill.py      # LLM-generated WorldQuant alpha scripts + retry
+│   │   ├── feature_skill.py    # LLM-generated feature/alpha scripts + retry (unified)
 │   │   ├── backtest_skill.py   # LLM-generated backtest scripts + retry
 │   │   ├── data_analyst.py     # Sub-agent: analyze → judge → feature plan
 │   │   ├── debug_agent.py      # Failure diagnosis + structured recovery hints
@@ -170,8 +169,7 @@ The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_b
 │   │   ├── data.py             # load_data (yfinance)
 │   │   ├── analysis.py         # run_data_analysis
 │   │   ├── data_analyst_tool.py# run_data_analyst
-│   │   ├── features.py         # build_features (validated)
-│   │   ├── alpha.py            # build_alphas (WorldQuant-style)
+│   │   ├── features.py         # build_features (+ build_alphas alias; auto-selects skill mode)
 │   │   ├── regressor.py        # train_model (sklearn, workspace-aligned target)
 │   │   ├── backtest.py         # run_backtest (pre-checked data/model match)
 │   │   └── evaluation.py       # evaluate_strategy (LLM verdict)
@@ -298,8 +296,7 @@ uv run python scripts/llm/task_decompose.py "Your research goal"
 | 2b | `load_data` | One-shot yfinance download or demo stub | explicit kwargs | `raw_data` |
 | 3 | `run_data_analyst` | Iterative EDA sub-agent → feature plan | `raw_data` | `feature_plan` |
 | 3b | `run_data_analysis` | Single-shot EDA alternative | `raw_data` or path | analysis summary |
-| 4a | `build_features` | Feature engineering from plan | `raw_data` + `feature_plan` | `engineered_data` |
-| 4b | `build_alphas` | WorldQuant-style alpha construction | `raw_data` + `feature_plan` + `search_context` | `engineered_data` |
+| 4 | `build_features` | Feature / alpha engineering (auto-selects skill; `build_alphas` is alias) | `raw_data` + `feature_plan`/`alpha_plan` + optional `search_context` | `engineered_data` |
 | 5 | `train_model` | sklearn regression / tuning | `engineered_data` (or `raw_data`) | `model_output` |
 | 6 | `run_backtest` | Skill-driven backtest in `model_based` or `rule_based` mode; if `rebalance_freq` is omitted, **infers** `weekly`/`monthly` from `feature_plan` text when it matches (else `daily`) | `engineered_data`/`raw_data` + optional `model_output` | `backtest_results` |
 | 7 | `evaluate_strategy` | LLM strategy verdict for ML or rule-based runs | `backtest_results` + optional `model_output` | `evaluation` |
@@ -308,14 +305,14 @@ uv run python scripts/llm/task_decompose.py "Your research goal"
 `run_data_loader` is the default pipeline entry for market data; `load_data` is the low-level direct fetch.  
 `run_data_analysis` is a single-shot EDA alternative to `run_data_analyst`.
 
-**Registry** — `scripts/tools/__init__.py` → `TOOL_REGISTRY` (12 tools).  
+**Registry** — `scripts/tools/__init__.py` → `TOOL_REGISTRY` (12 entries; `build_alphas` aliases `build_features`).  
 **Routing** — `tool_routing.py` reads `docs/tools.md` for LLM routing; `subtask_heuristic.py` as fallback.  
 **Injection** — `workspace` and `event_callback` auto-injected when present in a tool's signature.
 
 ### Validations
 
 - `run_data_loader` — normalizes single-ticker Yahoo downloads into panel-style OHLCV names and checks usable non-null price coverage before accepting `raw_data`
-- `build_features` / `build_alphas` — rejects empty plans, sanitizes target column names, post-checks output contains target
+- `build_features` (incl. alpha mode) — rejects empty plans, sanitizes target column names, post-checks output contains target and planned columns, rejects non-finite values
 - `train_model` — aligns with `feature_plan.target_column` from workspace; auto-derives target from price if missing; time-ordered split for datetime data
 - `run_backtest` — pre-checks data/model column alignment in `model_based` mode and falls back to `rule_based` when no `model_output` exists; **backtest skill** discourages using `target_pos*` / plan `target_column` as raw weights when they act as labels (prefer signal/score columns + lag). Optional `equity_dates` / `trade_events` in JSON feed the dashboard chart
 - `evaluate_strategy` — can review backtest-only rule-based runs; no longer treats missing `model_output` as automatically incomplete

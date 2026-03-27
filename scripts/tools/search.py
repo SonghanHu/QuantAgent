@@ -37,7 +37,7 @@ def web_search(
     definitions, or any external information the agent needs.
 
     Saves the search results as ``search_context`` in the workspace for
-    downstream tools (e.g. ``build_alphas``) to consume.
+    downstream tools (e.g. ``build_features`` in alpha mode) to consume.
     """
     load_dotenv()
     api_key = os.environ.get("BRAVE_API_KEY")

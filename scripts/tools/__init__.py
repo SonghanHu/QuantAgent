@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .alpha import build_alphas
 from .analysis import run_data_analysis
 from .backtest import run_backtest
 from .data_analyst_tool import run_data_analyst
@@ -33,7 +32,7 @@ TOOL_REGISTRY: dict[str, ToolFn] = {
     "run_data_analysis": run_data_analysis,
     "run_data_analyst": run_data_analyst,
     "build_features": build_features,
-    "build_alphas": build_alphas,
+    "build_alphas": build_features,
     "train_model": train_model,
     "run_backtest": run_backtest,
     "run_debug_agent": run_debug_agent,

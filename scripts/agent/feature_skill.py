@@ -1,8 +1,11 @@
 """
-Skill-driven feature engineering: LLM writes a script that implements a FeaturePlan.
+Skill-driven feature / alpha engineering: LLM writes a script that implements a plan.
 
-Reuses the same safety/execution pattern as ``analysis_skill`` but injects
-``OUTPUT_PATH`` (enriched parquet) and ``FEATURE_PLAN_JSON`` (serialised plan).
+Supports two skill modes:
+- ``feature_engineering`` — general features (rolling stats, ratios, technical indicators)
+- ``alpha_engineering`` — WorldQuant-style alpha factors (IC, winsorization, cross-sectional)
+
+Both produce an enriched parquet; the caller (``build_features``) picks the mode.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -32,6 +35,24 @@ from .analysis_skill import (
 )
 
 FEATURE_RUNS = REPO_ROOT / "data" / "feature_runs"
+ALPHA_RUNS = REPO_ROOT / "data" / "alpha_runs"
+
+SkillMode = Literal["feature_engineering", "alpha_engineering"]
+
+_RUNS_DIR: dict[SkillMode, Path] = {
+    "feature_engineering": FEATURE_RUNS,
+    "alpha_engineering": ALPHA_RUNS,
+}
+
+_SCRIPT_NAMES: dict[SkillMode, str] = {
+    "feature_engineering": "feature_eng.py",
+    "alpha_engineering": "alpha_eng.py",
+}
+
+_OUTPUT_PARQUET: dict[SkillMode, str] = {
+    "feature_engineering": "engineered.parquet",
+    "alpha_engineering": "alpha_features.parquet",
+}
 
 
 def _openai_client() -> OpenAI:
@@ -54,7 +75,9 @@ def execute_feature_skill(
     feature_plan: dict[str, Any],
     *,
     data_path: str,
+    skill_name: SkillMode = "feature_engineering",
     data_columns: list[str] | None = None,
+    search_context: str = "",
     model: str | None = None,
     client: OpenAI | None = None,
     timeout_sec: int = 120,
@@ -62,34 +85,52 @@ def execute_feature_skill(
     revision_context: str | None = None,
 ) -> dict[str, Any]:
     """
-    Given a FeaturePlan and input data path, generate and run a feature-engineering script.
+    Generate and run a feature/alpha engineering script from a skill markdown.
+
+    ``skill_name`` selects which skill contract and preamble layout to use:
+    - ``"feature_engineering"`` — ``FEATURE_PLAN_JSON`` + ``TARGET_COLUMN``
+    - ``"alpha_engineering"``  — ``ALPHA_PLAN_JSON`` + ``TARGET_COLUMN`` + ``SEARCH_CONTEXT``
 
     Returns dict with ``returncode``, ``output_path`` (enriched parquet), ``summary``, etc.
-
-    Use ``session_run_id`` (e.g. workspace run id) so retries overwrite the same ``feature_eng.py``.
-    Optional ``revision_context`` or an existing on-disk script seeds iterative fixes.
     """
     load_dotenv()
     m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
     if not m:
         raise RuntimeError("Neither OPENAI_TASK_MODEL nor OPENAI_SMALL_MODEL is set.")
 
-    skill = read_skill("feature_engineering")
+    skill = read_skill(skill_name)
     if not skill.strip():
-        raise FileNotFoundError("Skill not found: skills/feature_engineering.md")
+        raise FileNotFoundError(f"Skill not found: skills/{skill_name}.md")
 
     rid = (session_run_id or "").strip()
     run_id = rid[:12] if rid else uuid.uuid4().hex[:12]
-    run_dir = FEATURE_RUNS / run_id
+    runs_dir = _RUNS_DIR.get(skill_name, FEATURE_RUNS)
+    run_dir = runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     output_json = run_dir / "summary.json"
-    output_path = run_dir / "engineered.parquet"
-    script_path = run_dir / "feature_eng.py"
+    output_path = run_dir / _OUTPUT_PARQUET.get(skill_name, "engineered.parquet")
+    script_path = run_dir / _SCRIPT_NAMES.get(skill_name, "feature_eng.py")
 
-    plan_json_str = json.dumps(feature_plan.get("features", []), ensure_ascii=False, indent=2, default=str)
+    is_alpha = skill_name == "alpha_engineering"
+
+    items = feature_plan.get("alphas") or feature_plan.get("features") or []
+    plan_json_str = json.dumps(items, ensure_ascii=False, indent=2, default=str)
     target_column = str(feature_plan.get("target_column", "target"))
 
-    preamble = f'''# -*- injected: do not edit names -*-
+    if is_alpha:
+        preamble = f'''# -*- injected: do not edit names -*-
+from pathlib import Path
+import json
+DATA_PATH = {repr(data_path)}
+OUTPUT_PATH = Path({repr(str(output_path))})
+OUTPUT_JSON = Path({repr(str(output_json))})
+RUN_DIR = Path({repr(str(run_dir))})
+ALPHA_PLAN_JSON = {repr(plan_json_str)}
+TARGET_COLUMN = {repr(target_column)}
+SEARCH_CONTEXT = {repr(search_context[:4000])}
+'''
+    else:
+        preamble = f'''# -*- injected: do not edit names -*-
 from pathlib import Path
 import json
 DATA_PATH = {repr(data_path)}
@@ -100,21 +141,26 @@ FEATURE_PLAN_JSON = {repr(plan_json_str)}
 TARGET_COLUMN = {repr(target_column)}
 '''
 
+    if is_alpha:
+        preamble_vars = "DATA_PATH, OUTPUT_PATH, OUTPUT_JSON, RUN_DIR, ALPHA_PLAN_JSON, TARGET_COLUMN, SEARCH_CONTEXT"
+    else:
+        preamble_vars = "DATA_PATH, OUTPUT_PATH, OUTPUT_JSON, RUN_DIR, FEATURE_PLAN_JSON, TARGET_COLUMN"
+
     system = (
         "You output structured JSON with a single field `script` — executable Python code only. "
-        "Follow the skill specification exactly. Use only allowed imports. "
-        "The preamble defining DATA_PATH, OUTPUT_PATH, OUTPUT_JSON, RUN_DIR, FEATURE_PLAN_JSON, TARGET_COLUMN "
-        "will be prepended for you. "
+        f"Follow the {skill_name.replace('_', ' ')} skill specification exactly. Use only allowed imports. "
+        f"The preamble defining {preamble_vars} will be prepended for you. "
         "Return one complete script with consistent 4-space indentation and no stray indented top-level lines. "
         "If you use np.select or np.where: every choice and default must share one numeric dtype—never mix "
         "string ticker labels with default=np.nan. "
         "Wide panel price columns like `Adj Close_GLD` / `Close_SPY` are valid price inputs; do not assume "
         "bare `Adj Close` or `Close` must exist."
     )
+    plan_label = "Alpha plan" if is_alpha else "Feature plan"
     user = (
         f"## Skill\n\n{skill}\n\n"
-        f"## Feature plan\n\n{plan_json_str}\n\n"
-        f"## Target column\n\n{feature_plan.get('target_column', 'target')}\n\n"
+        f"## {plan_label}\n\n{plan_json_str}\n\n"
+        f"## Target column\n\n{target_column}\n\n"
         f"## Data file\n\n{data_path}\n"
     )
     if data_columns:
@@ -123,12 +169,16 @@ TARGET_COLUMN = {repr(target_column)}
             + json.dumps(data_columns[:200], ensure_ascii=False, default=str)
             + "\n"
         )
+    if is_alpha and search_context.strip():
+        user += f"\n## Research context from web search\n\n{search_context[:3000]}\n"
+
     rev_block = (revision_context or "").strip() or prior_script_revision_from_disk(script_path)
     if rev_block:
+        session_label = "alpha-engineering" if is_alpha else "feature-engineering"
         user += (
-            "\n\n## Prior attempt (same feature-engineering session)\n\n"
+            f"\n\n## Prior attempt (same {session_label} session)\n\n"
             f"{rev_block}\n\n"
-            "Revise or extend the prior script for the feature plan above; reuse working logic."
+            f"Revise or extend the prior script for the {plan_label.lower()} above; reuse working logic."
         )
 
     cli = client or _openai_client()
@@ -153,7 +203,7 @@ TARGET_COLUMN = {repr(target_column)}
                 err = f"{exc.__class__.__name__}: {exc}"
                 if syn_attempt == 2:
                     return {
-                        "skill": "feature_engineering",
+                        "skill": skill_name,
                         "run_id": run_id,
                         "script_path": str(script_path.relative_to(REPO_ROOT)),
                         "output_path": None,
@@ -212,7 +262,7 @@ TARGET_COLUMN = {repr(target_column)}
 
     if proc is None:
         return {
-            "skill": "feature_engineering",
+            "skill": skill_name,
             "run_id": run_id,
             "script_path": str(script_path.relative_to(REPO_ROOT)),
             "output_path": None,
@@ -231,7 +281,7 @@ TARGET_COLUMN = {repr(target_column)}
             summary = {"parse_error": True, "raw_head": output_json.read_text(encoding="utf-8")[:2000]}
 
     return {
-        "skill": "feature_engineering",
+        "skill": skill_name,
         "run_id": run_id,
         "script_path": str(script_path.relative_to(REPO_ROOT)),
         "output_path": str(output_path) if output_path.is_file() else None,

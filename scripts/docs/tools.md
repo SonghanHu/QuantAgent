@@ -4,7 +4,7 @@ Use this file as **context for the LLM**: after *Thought*, choose an *Action* th
 
 The small-model router (`agent.tool_routing.resolve_subtask_tool`) reads this catalog (truncated), returns structured `tool_name` plus a **JSON string** of kwargs (OpenAI schema-safe); invalid names are retried, then keyword fallback.
 
-**Registry:** `scripts/tools/__init__.py` defines `TOOL_REGISTRY` with **12** tools. Some tools also accept an optional `event_callback` (for streaming `data_loader_round` / `data_analyst_round` events to the dashboard).
+**Registry:** `scripts/tools/__init__.py` defines `TOOL_REGISTRY` with **12** entries (11 unique tools; `build_alphas` is an alias for `build_features`). Some tools also accept an optional `event_callback` (for streaming `data_loader_round` / `data_analyst_round` events to the dashboard).
 
 **Workspace:** Every run has a shared `Workspace` directory (`data/workspaces/<run_id>/`). Tools that accept a `workspace` parameter automatically receive it. Data flows between tools through workspace artifacts:
 
@@ -27,12 +27,12 @@ You do **not** need to pass `data_path` explicitly when the upstream `run_data_l
 
 1. ML / predictive workflow: `web_search` (optional) → `run_data_loader` → `run_data_analyst` → `build_features` → `train_model` → `run_backtest` → `evaluate_strategy`
 2. Rule-based workflow: `web_search` (optional) → `run_data_loader` → `run_data_analyst` → `build_features` → `run_backtest` → `evaluate_strategy`
-3. For alpha research: `web_search` → `run_data_loader` → `run_data_analyst` → **`build_alphas`** → `train_model` or direct `run_backtest` → `evaluate_strategy`
+3. For alpha research: `web_search` → `run_data_loader` → `run_data_analyst` → `build_features` (auto-selects alpha mode) → `train_model` or direct `run_backtest` → `evaluate_strategy`
 4. For single-shot analysis: `run_data_loader` or `load_data` → `run_data_analysis` → …
 
-Skip steps only if the subtask clearly does not need them. Use `build_alphas` instead of `build_features` when the goal involves alpha research, formulaic alphas, or WorldQuant-style factors.
+`build_features` auto-detects whether to use the `feature_engineering` or `alpha_engineering` skill based on workspace contents. `build_alphas` is a registry alias for `build_features`.
 
-**Tool names (registry):** `build_alphas`, `build_features`, `evaluate_strategy`, `fetch_sp500_tickers`, `load_data`, `run_backtest`, `run_data_analysis`, `run_data_analyst`, `run_data_loader`, `run_debug_agent`, `train_model`, `web_search`.
+**Tool names (registry):** `build_alphas` (alias), `build_features`, `evaluate_strategy`, `fetch_sp500_tickers`, `load_data`, `run_backtest`, `run_data_analysis`, `run_data_analyst`, `run_data_loader`, `run_debug_agent`, `train_model`, `web_search`.
 
 ---
 
@@ -118,31 +118,25 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
 
 ---
 
-## `build_features`
+## `build_features` (also aliased as `build_alphas`)
 
-- **What it does:** Reads `feature_plan` and `raw_data` from workspace, uses `skills/feature_engineering.md` to generate and execute a Python script that computes the planned features. Saves the enriched DataFrame as `engineered_data` in workspace.
+- **What it does:** Unified feature / alpha engineering tool. Reads a plan (`feature_plan` or `alpha_plan`) and `raw_data` from workspace, auto-selects the appropriate skill mode, generates and executes a Python script, and saves the enriched DataFrame as `engineered_data`.
+  - **`feature_engineering` mode** — uses `skills/feature_engineering.md`: general features (rolling stats, ratios, technical indicators).
+  - **`alpha_engineering` mode** — uses `skills/alpha_engineering.md`: WorldQuant-style alpha factors (IC computation, winsorization, cross-sectional signals). Also injects `search_context` from web search if available.
+- **Mode auto-detection:** When `mode` is `"auto"` (default), picks `alpha_engineering` if workspace has `alpha_plan` or `search_context`, otherwise `feature_engineering`. You can override with `mode="features"` or `mode="alphas"`.
+- **Registry alias:** `build_alphas` in the tool registry points to the same function.
 - **Validations (fail-fast):**
-  - Rejects empty feature plans (`features: []`).
-  - Sanitizes `target_column`: must be a short ASCII identifier (e.g. `target`, `fwd_ret_1d`); long sentences / non-ASCII are replaced with `"target"`.
-  - After script execution, verifies that the output parquet actually contains the target column; refuses to save `engineered_data` otherwise.
-- **When to use:** After `run_data_analyst` has produced a feature plan. Subtask mentions features, factors, signals, feature engineering.
-- **Arguments:**
-  - `workspace`: auto-injected. Must contain `raw_data` and `feature_plan` artifacts.
-  - `timeout_sec`: per-script subprocess timeout (default `120`).
-- **Returns:** `planned_features`, `target_column`, `engineered_shape`, `engineered_columns`, script execution details. Also saves `engineered_data` to workspace.
-- **ReAct example:** *Thought: Feature plan is ready, now build features.* → *Action: build_features* with `{}`.
-
----
-
-## `build_alphas`
-
-- **What it does:** **WorldQuant-style alpha factor construction.** Reads `feature_plan` (or `alpha_plan`) and `raw_data` from workspace, generates a Python script via `skills/alpha_engineering.md` that implements quantitative alpha expressions (momentum, mean-reversion, volume, volatility, technical, composite). Computes information coefficient (IC) for each alpha. Also injects `search_context` from web search if available. Saves enriched DataFrame as `engineered_data`.
-- **When to use:** Instead of `build_features` when the goal involves alpha research, factor investing, formulaic alphas, or WorldQuant-style quant research. Subtask mentions alpha, factors, signals, IC, cross-sectional.
+  - Rejects empty plans (`features: []` / `alphas: []`).
+  - Sanitizes `target_column`: must be a short ASCII identifier; long sentences / non-ASCII default to `"target"`.
+  - After execution: verifies target column exists, checks for missing planned columns, rejects non-finite values in features/target.
+- **When to use:** After `run_data_analyst` has produced a feature or alpha plan. Subtask mentions features, factors, signals, alpha, WorldQuant, IC, engineering.
 - **Arguments:**
   - `workspace`: auto-injected. Must contain `raw_data` and `feature_plan`/`alpha_plan`.
   - `timeout_sec`: per-script subprocess timeout (default `150`).
-- **Returns:** `planned_alphas`, `target_column`, `engineered_shape`, `engineered_columns`, IC preview, script execution details. Saves `engineered_data` to workspace.
-- **ReAct example:** *Thought: Build WorldQuant-style alphas from the plan.* → *Action: build_alphas* with `{}`.
+  - `mode`: `"auto"` | `"features"` | `"alphas"` (default `"auto"`).
+- **Returns:** `planned_features`, `target_column`, `skill_mode`, `engineered_shape`, `engineered_columns`, script execution details. Saves `engineered_data` to workspace.
+- **ReAct example:** *Thought: Feature plan is ready, now build features.* → *Action: build_features* with `{}`.
+- **ReAct example:** *Thought: Build WorldQuant-style alphas.* → *Action: build_features* with `{ "mode": "alphas" }` (or just `{}` — auto-detects from workspace).
 
 ---
 
