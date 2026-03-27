@@ -122,24 +122,39 @@ def build_features(
             result["returncode"] = 1
             return result
 
-        target_ser = pd.to_numeric(enriched[target_column], errors="coerce")
-        target_non_finite = int((~np.isfinite(target_ser.to_numpy(dtype=np.float64, copy=False))).sum())
+        check_cols = [target_column, *[c for c in planned_names if c in enriched.columns]]
+        for c in check_cols:
+            enriched[c] = pd.to_numeric(enriched[c], errors="coerce")
+        enriched.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-        feature_non_finite = 0
-        for c in planned_names:
-            s = pd.to_numeric(enriched[c], errors="coerce")
-            feature_non_finite += int((~np.isfinite(s.to_numpy(dtype=np.float64, copy=False))).sum())
+        pre_clean_rows = len(enriched)
+        enriched.dropna(subset=check_cols, inplace=True)
+        dropped = pre_clean_rows - len(enriched)
 
-        if target_non_finite > 0 or feature_non_finite > 0:
-            result["error"] = "non_finite_values_in_engineered_data"
+        min_rows = max(50, int(pre_clean_rows * 0.10))
+        if len(enriched) < min_rows:
+            result["error"] = "too_few_rows_after_cleanup"
             result["message"] = (
-                "Engineered output contains non-finite values after cleanup. "
-                f"target_non_finite={target_non_finite}, feature_non_finite_total={feature_non_finite}"
+                f"Only {len(enriched)} rows remain after dropping {dropped} non-finite warmup rows "
+                f"(minimum {min_rows}). The generated script likely has a bug beyond normal lookback NaNs."
             )
             result["returncode"] = 1
-            result["target_non_finite"] = target_non_finite
-            result["feature_non_finite_total"] = feature_non_finite
             return result
+
+        remaining_nf = 0
+        for c in check_cols:
+            remaining_nf += int((~np.isfinite(enriched[c].to_numpy(dtype=np.float64, copy=False))).sum())
+        if remaining_nf > 0:
+            result["error"] = "non_finite_values_in_engineered_data"
+            result["message"] = (
+                f"Engineered output still has {remaining_nf} non-finite values after dropping "
+                f"{dropped} warmup rows. This indicates a script bug."
+            )
+            result["returncode"] = 1
+            return result
+
+        if dropped > 0:
+            result["warmup_rows_dropped"] = dropped
 
         desc = "Alpha-engineered dataset" if skill_name == "alpha_engineering" else "Feature-engineered dataset"
         workspace.save_df("engineered_data", enriched, description=desc)
