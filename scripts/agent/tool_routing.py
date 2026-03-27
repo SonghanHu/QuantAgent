@@ -96,12 +96,16 @@ def resolve_subtask_tool(
     model: str | None = None,
     max_catalog_chars: int = 6000,
     max_retries: int = 2,
+    execution_context: str = "",
 ) -> ResolvedTool:
     """
     Pick ``tool_name`` and ``kwargs`` via small model + catalog, else keyword fallback.
 
     ``max_retries`` counts LLM calls (each call gets a fresh parse); on repeated invalid
     ``tool_name``, the prompt is nudged with the allowed list before falling back.
+
+    *execution_context* (from ``build_execution_context``) gives the router LLM awareness
+    of prior step outcomes and available workspace artifacts.
     """
     valid = sorted(TOOL_REGISTRY)
     explicit_name = _explicit_tool_name_from_title(subtask.title)
@@ -141,6 +145,8 @@ def resolve_subtask_tool(
         f"title: {subtask.title}\n"
         f"description: {subtask.description}\n"
     )
+    if execution_context:
+        user += f"\n{execution_context}\n"
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},

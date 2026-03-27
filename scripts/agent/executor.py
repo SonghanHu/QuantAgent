@@ -43,12 +43,17 @@ def run_subtask(
     max_catalog_chars: int = 6000,
     routing_retries: int = 2,
     event_callback: Callable[[dict[str, Any]], None] | None = None,
+    execution_context: str = "",
 ) -> AgentState:
     """
     Execute one subtask: resolve tool (LLM or heuristic), call ``run_tool``, append log.
 
     If *workspace* is provided and the target tool accepts a ``workspace`` parameter,
     it is automatically injected.  ``tool_kwargs`` merges on top (explicit overrides win).
+
+    *execution_context* is a text summary of prior steps + workspace artifacts, injected
+    into the tool-routing prompt and into ``goal`` / ``query`` / ``instruction`` kwargs
+    so the LLM has full situational awareness.
     """
     resolved = resolve_subtask_tool(
         subtask,
@@ -57,6 +62,7 @@ def run_subtask(
         model=routing_model,
         max_catalog_chars=max_catalog_chars,
         max_retries=routing_retries,
+        execution_context=execution_context,
     )
     name = resolved.tool_name
     kwargs = dict(resolved.kwargs)
@@ -72,15 +78,19 @@ def run_subtask(
             }
         )
 
+    ctx_block = ""
+    if execution_context:
+        ctx_block = f"\n\n{execution_context}"
+
     fn = TOOL_REGISTRY.get(name)
     if fn is not None:
         sig_params = inspect.signature(fn).parameters
         if "goal" in sig_params and "goal" not in kwargs:
-            kwargs["goal"] = f"{subtask.title}\n\nOverall objective: {state.goal}"
+            kwargs["goal"] = f"{subtask.title}\n\nOverall objective: {state.goal}{ctx_block}"
         if "query" in sig_params and "query" not in kwargs:
-            kwargs["query"] = subtask.description or subtask.title
+            kwargs["query"] = (subtask.description or subtask.title) + ctx_block
         if "instruction" in sig_params and "instruction" not in kwargs:
-            kwargs["instruction"] = subtask.description or subtask.title
+            kwargs["instruction"] = (subtask.description or subtask.title) + ctx_block
 
     if tool_kwargs:
         kwargs.update(tool_kwargs)

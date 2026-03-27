@@ -20,6 +20,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from agent.context import build_execution_context
 from agent.events import EventBus
 from agent.executor import run_subtask
 from agent.models import Subtask, TaskBreakdown
@@ -452,6 +453,7 @@ def run_workflow(
                 emit_step_think(st, record, next_st)
                 continue
 
+            exec_ctx = build_execution_context(state, ws, current_subtask_id=st.id)
             if event_bus is not None:
                 event_bus.emit(
                     "subtask_start",
@@ -470,6 +472,7 @@ def run_workflow(
                 routing_model=model,
                 routing_retries=2,
                 event_callback=tool_event_callback,
+                execution_context=exec_ctx,
             )
             last = state.execution_log[-1]
             log(f"   tool={last.tool_name} status={last.status} {last.result_summary}\n")
@@ -499,6 +502,7 @@ def run_workflow(
                             total=total_subtasks,
                             completed=len(state.completed_subtasks),
                         )
+                    exec_ctx = build_execution_context(state, ws, current_subtask_id=st.id)
                     state = run_subtask(
                         state,
                         st_fb,
@@ -507,6 +511,7 @@ def run_workflow(
                         routing_model=model,
                         routing_retries=2,
                         event_callback=tool_event_callback,
+                        execution_context=exec_ctx,
                     )
                     last = state.execution_log[-1]
                     log(f"   retry-after-failure tool={last.tool_name} status={last.status}\n")
@@ -601,6 +606,7 @@ def run_workflow(
                                             total=total_subtasks,
                                             completed=len(state.completed_subtasks),
                                         )
+                                    exec_ctx = build_execution_context(state, ws, current_subtask_id=st.id)
                                     state = run_subtask(
                                         state,
                                         st,
@@ -609,6 +615,7 @@ def run_workflow(
                                         routing_model=model,
                                         routing_retries=2,
                                         event_callback=tool_event_callback,
+                                        execution_context=exec_ctx,
                                     )
                                     last = state.execution_log[-1]
                                     log(f"   retry tool={last.tool_name} status={last.status} {last.result_summary}\n")
