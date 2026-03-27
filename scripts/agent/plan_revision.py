@@ -55,6 +55,12 @@ def revise_plan(
         "- Dependencies must form a valid DAG. `run_backtest` must depend on feature/model steps; "
         "`evaluate_strategy` must depend on `run_backtest`.\n"
         "- Do not invent completed tools; align with what the log shows.\n"
+        "- **Hard vs soft defaults (不可丢失约束):** Preserve HARD constraints from the ORIGINAL user goal exactly: "
+        "asset/universe, prediction/target definition, strategy economics (e.g. long/flat with thresholding), "
+        "rebalance cadence, transaction-cost assumption (0 unless explicitly requested), and requested model family. "
+        "Only modify SOFT defaults (threshold when unspecified, hyperparameter tuning choices) when necessary.\n"
+        "- If `train_model` is present and the user explicitly requested a model family, keep the `Requested model: ...` "
+        "line in the `train_model` subtask description so the tool can pass `requested_model_name`.\n"
     )
     user = (
         f"## Goal\n{goal.strip()}\n\n"

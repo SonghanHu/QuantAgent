@@ -206,7 +206,7 @@ export function ArtifactPanel({
                   rel="noreferrer"
                   className="text-xs text-cyan-400/90 hover:underline"
                 >
-                  在新标签页打开图片
+                  Open image in a new tab
                 </a>
               </div>
             ) : preview.kind === 'text' ? (

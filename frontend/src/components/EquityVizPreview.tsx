@@ -68,8 +68,9 @@ export function EquityVizPreview({ payload }: { payload: EquityVizPayload }) {
   return (
     <div className="space-y-4">
       <p className="text-xs leading-relaxed text-slate-400">
-        净值曲线（交互）：青色为策略；虚线为基准（若回测输出 <code className="text-slate-500">benchmark_curves</code>
-        ）。点击圆点或下方交易行可高亮对应时点。区间约{' '}
+        Interactive equity curve: cyan is the strategy; dashed lines are benchmarks (when the backtest outputs{' '}
+        <code className="text-slate-500">benchmark_curves</code>). Click a point or a trade row below to
+        highlight the corresponding date. Range:{' '}
         <span className="text-slate-300">
           {payload.dates[0] ?? '—'} — {payload.dates[payload.dates.length - 1] ?? '—'}
         </span>
@@ -160,7 +161,7 @@ export function EquityVizPreview({ payload }: { payload: EquityVizPayload }) {
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-400">
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-0.5 w-5 bg-cyan-400" aria-hidden />
-            策略
+            Strategy
           </span>
           {payload.benchmarks.map((b, bi) => (
             <span key={`leg-${bi}`} className="inline-flex items-center gap-1.5">
@@ -179,7 +180,7 @@ export function EquityVizPreview({ payload }: { payload: EquityVizPayload }) {
 
       {payload.trades.length > 0 ? (
         <div>
-          <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">交易点</div>
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">Trade points</div>
           <ul className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-slate-900/50 p-2">
             {payload.trades.map((t, ti) => {
               const sel = selectedListIndex === ti
@@ -210,7 +211,10 @@ export function EquityVizPreview({ payload }: { payload: EquityVizPayload }) {
           </ul>
         </div>
       ) : (
-        <p className="text-xs text-slate-500">本次回测未提供 `trade_events`；仅显示净值曲线。可在回测脚本中输出交易列表以启用标记。</p>
+        <p className="text-xs text-slate-500">
+          This backtest did not provide <code>trade_events</code>; only the equity curve is shown. Output a
+          trade list in the backtest script to enable markers.
+        </p>
       )}
     </div>
   )

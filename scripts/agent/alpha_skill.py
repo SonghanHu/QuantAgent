@@ -50,11 +50,16 @@ def execute_alpha_skill(
     model: str | None = None,
     client: OpenAI | None = None,
     timeout_sec: int = 150,
+    session_run_id: str | None = None,
+    revision_context: str | None = None,
 ) -> dict[str, Any]:
     """
     Given an AlphaPlan and data path, generate and run an alpha engineering script.
 
     Returns dict with ``returncode``, ``output_path`` (enriched parquet), ``summary``, etc.
+
+    Use ``session_run_id`` (e.g. workspace run id) so retries overwrite the same script.
+    Optional ``revision_context`` or an existing on-disk script seeds iterative fixes.
     """
     load_dotenv()
     m = model or os.environ.get("OPENAI_TASK_MODEL") or os.environ.get("OPENAI_SMALL_MODEL")
@@ -113,23 +118,65 @@ SEARCH_CONTEXT = {repr(search_context[:4000])}
         )
 
     cli = client or _openai_client()
-    parsed = parse_script_with_retry(
-        cli, m, [{"role": "system", "content": system}, {"role": "user", "content": user}],
-    )
-    body = _clean_script(parsed.script)
-    _validate_script(body)
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    max_runtime_fixes = 3
+    proc: subprocess.CompletedProcess[str] | None = None
+    full_source = ""
 
-    full_source = preamble + "\n\n" + body + "\n"
-    script_path.write_text(full_source, encoding="utf-8")
+    for runtime_round in range(max_runtime_fixes):
+        parsed = parse_script_with_retry(cli, m, messages)
+        body = _clean_script(parsed.script)
+        _validate_script(body)
 
-    proc = subprocess.run(
-        [sys.executable, str(script_path)],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=timeout_sec,
-        env={**os.environ, "PYTHONUTF8": "1"},
-    )
+        full_source = preamble + "\n\n" + body + "\n"
+        script_path.write_text(full_source, encoding="utf-8")
+
+        proc = subprocess.run(
+            [sys.executable, str(script_path)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            env={**os.environ, "PYTHONUTF8": "1"},
+        )
+        if proc.returncode == 0:
+            break
+        if runtime_round < max_runtime_fixes - 1:
+            tail_err = _tail(proc.stderr, 6_000)
+            summary_hint = ""
+            if output_json.is_file():
+                try:
+                    failed_summary = json.loads(output_json.read_text(encoding="utf-8"))
+                    if isinstance(failed_summary, dict):
+                        summary_hint = json.dumps(failed_summary, ensure_ascii=False, default=str)[:2_500]
+                except json.JSONDecodeError:
+                    summary_hint = output_json.read_text(encoding="utf-8")[:2_500]
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "The script failed when executed. Return a full corrected script only.\n\n"
+                        + (f"### stderr\n```\n{tail_err}\n```\n\n" if tail_err.strip() else "")
+                        + (f"### summary.json\n```json\n{summary_hint}\n```\n\n" if summary_hint else "")
+                    ),
+                },
+            )
+
+    if proc is None:
+        return {
+            "skill": "alpha_engineering",
+            "run_id": run_id,
+            "script_path": str(script_path.relative_to(REPO_ROOT)),
+            "output_path": None,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "internal_error: no subprocess result",
+            "summary": None,
+            "data_path": data_path,
+        }
 
     summary: dict[str, Any] | None = None
     if output_json.is_file():

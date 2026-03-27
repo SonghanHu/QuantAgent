@@ -82,7 +82,7 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
   - `auto_adjust`, `prepost`, `actions`: booleans
   - `rationale`: optional string for logs
 - **Arguments (stub path):** omit `tickers` or use `dataset: "demo"`.
-- **Design note:** Let a **planner LLM** read `docs/yfinance_guide.md` and emit these kwargs (or use `llm.yfinance_spec.infer_yfinance_spec` → `load_data(**spec.model_dump(exclude_none=True))`). The model should **not** write arbitrary code—only fill parameters.
+- **Design note:** Let a **planner LLM** read `docs/yfinance_guide.md` and emit these kwargs. In the main pipeline, `run_data_loader` handles this automatically via its iterative judge loop. The model should **not** write arbitrary code—only fill parameters.
 - **Returns:** `source`, `rows`, `columns`, `start_ts`, `end_ts`, `preview_rows`, etc.; or stub fields. When workspace is present, also `workspace_artifact` and `workspace_path`.
 - **ReAct example:** *Thought: Need 2y daily SPY for momentum.* → *Action: load_data* with `{ "tickers": "SPY", "period": "2y", "interval": "1d" }`.
 
@@ -152,6 +152,7 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
 - **When to use:** Training / fitting / regression / hyperparameter tuning / cross-validation. Usually **skip** this for rule-based strategies such as MACD, momentum ranking, fixed long-short rotations, or formulaic signals that already define positions directly.
 - **Arguments:**
   - `model_name`: `linear_regression`, `ridge`, `lasso`, `elasticnet`, `random_forest`, `gradient_boosting`, `svr` (aliases `lr`, `rf`, `gbm`, `gbr`, `enet`, …)
+  - `requested_model_name` (optional): if the user explicitly requested a model family in natural language, pass that request verbatim here (e.g. `RandomForestRegressor`, `Random Forest`). The tool will record whether the executed model matches and emit `spec_deviated` / `spec_deviation_reason`.
   - `feature_columns`: list or comma-separated string; **omit** to use all numeric columns except `target_column`
   - `target_column`: default `"target"`. When loading `engineered_data` from workspace, the tool reads `feature_plan.target_column` and uses it (if it is a valid identifier); this ensures training uses the same target that feature engineering produced. If the column is missing but the frame has **Adj Close** / **Close** (typical yfinance OHLCV), the tool adds `target` = **next-bar simple return** of that price series.
   - `tune_hyperparameters`: `true` / `false` — runs `RandomizedSearchCV` when a search space exists (`linear_regression` / OLS has none → `tune_ignored`)
@@ -159,7 +160,11 @@ Skip steps only if the subtask clearly does not need them. Use `build_alphas` in
   - `n_samples`, `n_features`: synthetic data shape when no `data_path`
   - `test_size`, `random_state`, `cv_folds`, `tuning_iter`
 - **Split:** For data with a **monotonic datetime index**, train/test split is **time-ordered** (last `test_size` fraction held out); otherwise sklearn `train_test_split` (shuffled).
-- **Returns:** `train_r2`, `test_r2`, `test_rmse`, `best_params`, `best_cv_r2`, `feature_columns`, `target_derived_from_price` (if auto-target was used), `time_ordered_split`, etc.
+- **Returns:** `train_r2`, `test_r2`, `test_rmse`, `best_params`, `best_cv_r2`, `feature_columns`, `target_derived_from_price` (if auto-target was used), `time_ordered_split`, plus spec-tracking fields:
+  - `executed_model_key`, `executed_model_display`
+  - `requested_model_key` (if provided)
+  - `spec_deviated`, `spec_deviation_reason`
+  - `target_prediction_horizon` (best-effort inference)
 - **ReAct example:** *Thought: Tune a ridge on f0,f1,f2.* → `{ "model_name": "ridge", "feature_columns": "f0,f1,f2", "tune_hyperparameters": true }`.
 
 ---

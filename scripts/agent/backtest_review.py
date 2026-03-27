@@ -58,6 +58,7 @@ Checklist (must enforce):
 10. **Execution timing:** close-based signal on day t → portfolio return on t+1 (one explicit lag); flag double-lag on weights and returns.
 11. **Rebalance:** weekly/monthly must ffill weights between rebalances; daily updates targets for next bar. Reject tautological rebalance masks (e.g. always-True OR of a mask with its negation).
 12. **Self-check:** before approve, confirm (a) strategy matches config/user intent, (b) costs match config, (c) lag OK, (d) turnover from held weights, (e) survivorship/universe limitations mentioned in notes if relevant.
+13. **Signal mapping explicit (model_based long/flat):** OUTPUT_JSON must include `signal_mapping` with at least `prediction_target_horizon`, `signal_rule`, `execution`, exposure stats (`avg_gross_exposure`, `percent_days_invested`), and `win_rate_definition` so long/flat conversion and win-rate denominator are auditable.
 
 If you are unsure but see no clear violation, set approved=true and mention minor risks in issues (severity minor).
 If there is any likely look-ahead, wrong import, or missing OUTPUT_JSON handling, approved=false (severity major).

@@ -112,7 +112,18 @@ def evaluate_strategy(
         "Consider: Sharpe ratio quality (>1 good, >2 excellent), drawdown severity, "
         "turnover/cost impact, and regime robustness. "
         "If model training metrics are present, also consider overfitting risk (train vs test R²). "
-        "If no model output is present, treat this as a rule-based strategy review rather than an incomplete run."
+        "If no model output is present, treat this as a rule-based strategy review rather than an incomplete run. "
+        "Before judging performance, run PRIOR consistency checks and reflect them in `risk_assessment` "
+        "and/or `weaknesses` with explicit labeled flags when relevant:\n"
+        "- Spec tracking: if `model_output.spec_deviated == true` (or if requested != executed model in artifacts), "
+        "flag `spec_deviation=true` and explain why it matters.\n"
+        "- Data hygiene: if `model_output.non_finite_counts_after_cleanup` indicates any non-finite values "
+        "in features/target after cleanup, flag `data_hygiene_warning=true`.\n"
+        "- Metric definition: if `win_rate` is unusually low relative to Sharpe/max_drawdown or if the win-rate "
+        "denominator may include flat (uninvested) days, flag `metric_definition_check_required=true` and explain "
+        "what definition you suspect.\n"
+        "- Exposure sparsity: if `backtest_results.signal_mapping.percent_days_invested` exists and is very low, "
+        "note that returns may be driven by sparse participation rather than predictive edge.\n"
     )
     user = "\n\n".join(context_parts) + workspace_summary
 

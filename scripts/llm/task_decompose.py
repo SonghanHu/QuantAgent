@@ -84,6 +84,15 @@ def decompose_task(task_text: str, *, model: str) -> TaskBreakdown:
         "- If the user's goal only covers part of the pipeline (e.g. just analysis), "
         "only include the relevant steps.\n"
         "- Do not add `run_debug_agent` unless the user asks for debugging/diagnosis or recovery from errors.\n"
+        "- **Hard vs soft defaults (不可丢失约束):** Split the user goal into:\n"
+        "  - HARD constraints: assets/universe, prediction/target definition (e.g. next-day return), "
+        "strategy economics (e.g. long/flat with thresholding), rebalance cadence (daily/weekly/monthly), "
+        "transaction-cost assumption (0 unless explicitly requested), and any requested model family (e.g. RandomForestRegressor). "
+        "Preserve all HARD constraints in the `train_model` / `run_backtest` / `evaluate_strategy` subtask titles/descriptions.\n"
+        "  - SOFT defaults: threshold when unspecified, hyperparameter tuning choices, model scoring preferences, and any other defaults not explicitly requested. "
+        "Only modify SOFT defaults when necessary.\n"
+        "- If the user explicitly requests a model family for `train_model`, include a line in the `train_model` subtask description like: "
+        "`Requested model: <model family text as in the user prompt>` so tool routing can pass it as `requested_model_name`.\n"
     )
     user = f"Task to decompose:\n\n{task_text.strip()}"
 

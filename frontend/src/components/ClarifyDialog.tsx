@@ -55,32 +55,8 @@ export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }
       setLoading(false)
       return
     }
-    let alive = true
-    setLoading(true)
-    setError(null)
-    setResult(null)
-    ;(async () => {
-      try {
-        const res = await fetch('/api/clarify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ goal, conversation: undefined }),
-        })
-        if (!res.ok) throw new Error(`clarify failed: ${res.status}`)
-        const data = (await res.json()) as ClarifyResult
-        if (!alive) return
-        setResult(data)
-      } catch (err: unknown) {
-        if (!alive) return
-        setResult(null)
-        setError(err instanceof Error ? err.message : 'Unable to clarify the goal right now.')
-      } finally {
-        if (alive) setLoading(false)
-      }
-    })()
-    return () => {
-      alive = false
-    }
+    void clarify([])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, goal, clarifySession])
 
   function handleAnswer() {
@@ -122,8 +98,10 @@ export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }
     <div className="space-y-3 border-t border-white/10 pt-4">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <div className="text-sm font-medium text-cyan-300">目标澄清（必填）</div>
-          <div className="text-xs text-slate-500">运行前须完成此步；与下方 Activity / Workspace 标签页无关。</div>
+          <div className="text-sm font-medium text-cyan-300">Goal Clarification (Required)</div>
+          <div className="text-xs text-slate-500">
+            Complete this step before running; it is unrelated to the Activity / Workspace tabs below.
+          </div>
         </div>
         <button
           type="button"
@@ -131,15 +109,16 @@ export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }
           onClick={onAbort}
           disabled={loading}
         >
-          返回编辑目标
+          Back to edit goal
         </button>
       </div>
 
       {error && (
         <div className="space-y-3 rounded-2xl border border-rose-400/20 bg-rose-400/5 p-4">
-          <div className="text-sm font-medium text-rose-300">澄清服务不可用</div>
+          <div className="text-sm font-medium text-rose-300">Clarification service unavailable</div>
           <p className="text-sm text-slate-300">
-            {error}。请重试，或返回修改目标文案；无法在未完成澄清时启动任务。
+            {error}. Please retry, or go back to edit your goal text; you can’t start a run until clarification
+            is completed.
           </p>
           <div className="flex flex-wrap gap-2">
             <button
@@ -147,14 +126,14 @@ export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }
               className="rounded-xl bg-rose-400/15 px-3 py-2 text-sm font-medium text-rose-200 transition hover:bg-rose-400/25"
               onClick={handleRetry}
             >
-              重试
+              Retry
             </button>
             <button
               type="button"
               className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-400 transition hover:border-white/20"
               onClick={onAbort}
             >
-              返回编辑目标
+              Back to edit goal
             </button>
           </div>
         </div>
@@ -163,7 +142,7 @@ export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }
       {loading && !error && (
         <div className="flex items-center gap-3 rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
-          <span className="text-sm text-cyan-300">正在理解你的目标…</span>
+          <span className="text-sm text-cyan-300">Understanding your goal…</span>
         </div>
       )}
 
@@ -171,12 +150,12 @@ export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }
         <div className="space-y-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-4">
           <div className="flex items-center gap-2">
             <span className="text-emerald-400">✓</span>
-            <span className="text-sm font-medium text-emerald-300">目标已理解</span>
+            <span className="text-sm font-medium text-emerald-300">Goal understood</span>
           </div>
           {result.summary && <p className="text-sm text-slate-300">{result.summary}</p>}
           {result.assumptions.length > 0 && (
             <div>
-              <div className="mb-1 text-xs font-medium uppercase tracking-widest text-slate-500">假设</div>
+              <div className="mb-1 text-xs font-medium uppercase tracking-widest text-slate-500">Assumptions</div>
               <ul className="space-y-0.5 text-sm text-slate-400">
                 {result.assumptions.filter(Boolean).map((a, i) => (
                   <li key={i} className="flex gap-1.5">
@@ -191,14 +170,14 @@ export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }
             className="rounded-full bg-emerald-400/20 px-4 py-2 text-sm font-medium text-emerald-300 transition hover:bg-emerald-400/30"
             onClick={() => onConfirm(result.refined_goal || goal)}
           >
-            使用精炼目标并开始运行
+            Use refined goal and start running
           </button>
         </div>
       )}
 
       {!loading && !error && result && !result.understood && (
         <div className="space-y-3 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
-          <div className="text-sm font-medium text-amber-300">开始运行前请补充：</div>
+          <div className="text-sm font-medium text-amber-300">Please answer before starting:</div>
           <ol className="space-y-1.5">
             {result.questions.map((q, i) => (
               <li key={i} className="flex gap-2 text-sm text-slate-300">
@@ -210,7 +189,7 @@ export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <input
               className="min-w-0 flex-1 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-              placeholder="在此作答…"
+              placeholder="Answer here…"
               value={answer}
               onChange={(e) => setAnswer(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAnswer()}
@@ -222,14 +201,14 @@ export function ClarifyDialog({ goal, open, clarifySession, onConfirm, onAbort }
                 onClick={handleAnswer}
                 disabled={!answer.trim()}
               >
-                提交回答
+                Submit answer
               </button>
               <button
                 type="button"
                 className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-400 transition hover:border-white/20"
                 onClick={handleDefaults}
               >
-                全部使用默认假设
+                Use all default assumptions
               </button>
             </div>
           </div>

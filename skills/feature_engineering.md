@@ -26,7 +26,12 @@ A **single Python script** that:
    - If no trustworthy price columns exist at all, write an error summary to `OUTPUT_JSON` and `sys.exit(1)`.
    - The final parquet **must** contain a column named exactly `TARGET_COLUMN`.
 4. Handles edge cases: NaN from rolling windows, division by zero, look-ahead bias (only use past data for each row).
-5. Drops rows where `TARGET_COLUMN` is NaN (tail row from shift, warm-up NaN rows).
+5. Cleans the dataset for training safety:
+   - Replace `inf` / `-inf` with `NaN` in **all numeric feature columns** that the plan will train on (and in `TARGET_COLUMN`).
+   - Drop rows where `TARGET_COLUMN` is not finite (NaN or inf/-inf).
+   - Drop rows where any training feature column is not finite after cleanup.
+   - **Preserve index/row alignment:** only filter using a single boolean mask on the same DataFrame (no `reset_index`), so feature rows and target rows remain exactly aligned.
+   - Log how many rows were dropped due to non-finite values.
 6. Saves the enriched DataFrame (original columns + new features + target) to `OUTPUT_PATH` (`.parquet`).
 7. Writes a JSON summary to `OUTPUT_JSON`:
    ```json
@@ -37,6 +42,12 @@ A **single Python script** that:
      "rows": <int>,
      "columns": <int>,
      "nulls_introduced": <int>,
+     "non_finite_feature_count_before_drop": <int>,
+     "non_finite_target_count_before_drop": <int>,
+     "dropped_rows_total": <int>,
+     "dropped_rows_non_finite_features": <int>,
+     "dropped_rows_non_finite_target": <int>,
+     "final_trainable_rows": <int>,
      "notes": "..."
    }
    ```
@@ -54,6 +65,16 @@ A **single Python script** that:
   - Never do `df["x"] = other_df["y"]` unless `other_df.index.equals(df.index)`.
 - **No look-ahead:** rolling / lag features must only use data available at the current timestamp.
   The only allowed forward operation is `shift(-1)` for the target (label).
+- **Training usability / non-finite guard (mandatory before saving):**
+  - Before writing `OUTPUT_PATH` / `OUTPUT_JSON`, run a cleanup pass:
+    1. Replace `inf` and `-inf` with `NaN`.
+    2. Identify the set of **training feature columns** from the injected `FEATURE_PLAN_JSON` (use feature `name` fields).
+    3. Compute a single `trainable_mask` that is `True` only when:
+       - `TARGET_COLUMN` is finite
+       - every training feature column is finite
+       - and (if you drop rows) the mask preserves index alignment (no reindexing from other frames).
+    4. Drop using `df.loc[trainable_mask]` and record the exact counts in the summary JSON.
+  - If after cleanup there are fewer than a reasonable minimum training rows (e.g. < 50), still save, but put a strong warning in `notes` explaining that training may be unstable.
 - **Panel price data:** many runs use wide multi-asset OHLCV frames with columns like `Adj Close_GLD`,
   `Close_USO`, `Volume_UUP`. Treat these as valid price inputs. Do **not** fail just because bare
   `Adj Close` / `Close` columns are absent.

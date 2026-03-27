@@ -81,6 +81,7 @@ def build_features(
 
     if result.get("returncode") == 0 and result.get("output_path"):
         import pandas as pd
+        import numpy as np
 
         enriched = pd.read_parquet(result["output_path"])
 
@@ -92,6 +93,35 @@ def build_features(
             )
             result["returncode"] = 1
             result["target_column"] = target_column
+            return result
+
+        # Hard training-usability validation: fail fast if non-finite values leak into engineered_data.
+        # This prevents downstream model training / backtests from either crashing or silently producing nonsense.
+        planned_feature_names = [f["name"] for f in features if f.get("name")]
+        missing_features = [c for c in planned_feature_names if c not in enriched.columns]
+        if missing_features:
+            result["error"] = "missing_planned_feature_columns"
+            result["message"] = f"Engineered output is missing planned feature columns: {missing_features[:10]}"
+            result["returncode"] = 1
+            return result
+
+        target_ser = pd.to_numeric(enriched[target_column], errors="coerce")
+        target_non_finite = int((~np.isfinite(target_ser.to_numpy(dtype=np.float64, copy=False))).sum())
+
+        feature_non_finite = 0
+        for c in planned_feature_names:
+            s = pd.to_numeric(enriched[c], errors="coerce")
+            feature_non_finite += int((~np.isfinite(s.to_numpy(dtype=np.float64, copy=False))).sum())
+
+        if target_non_finite > 0 or feature_non_finite > 0:
+            result["error"] = "non_finite_values_in_engineered_data"
+            result["message"] = (
+                "Feature-engineered output contains non-finite values after the cleanup step. "
+                f"target_non_finite={target_non_finite}, feature_non_finite_total={feature_non_finite}"
+            )
+            result["returncode"] = 1
+            result["target_non_finite"] = target_non_finite
+            result["feature_non_finite_total"] = feature_non_finite
             return result
 
         workspace.save_df("engineered_data", enriched, description="Feature-engineered dataset")

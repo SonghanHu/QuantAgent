@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { AgentEvent } from '../types'
 
@@ -35,7 +35,5 @@ export function useAgentSocket(runId: string | null) {
     }
   }, [runId])
 
-  const latestEvent = useMemo(() => events.at(-1) ?? null, [events])
-
-  return { events, latestEvent, connectionStatus }
+  return { events, connectionStatus }
 }

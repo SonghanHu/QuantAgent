@@ -32,7 +32,7 @@ export function GoalInput({
           disabled={locked || !goal.trim()}
           onClick={onSubmit}
         >
-          {isRunning ? 'Running…' : isClarifying ? '澄清中…' : 'Run agent'}
+          {isRunning ? 'Running…' : isClarifying ? 'Clarifying…' : 'Run agent'}
         </button>
       </div>
       <textarea
@@ -50,8 +50,8 @@ export function GoalInput({
       />
       <div className="mt-2 text-sm text-slate-500">
         {isClarifying
-          ? '澄清进行中，目标暂不可编辑。完成后点击「使用精炼目标并开始运行」。'
-          : '按 `Cmd/Ctrl + Enter` 先进入必填目标澄清，再启动任务。'}
+          ? 'Clarification is in progress. The goal is temporarily locked. When done, click "Use refined goal and start running".'
+          : 'Press `Cmd/Ctrl + Enter` to enter the required goal clarification first, then start the task.'}
       </div>
       {footer}
     </section>

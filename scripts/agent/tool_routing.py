@@ -130,7 +130,9 @@ def resolve_subtask_tool(
         "You route a single research subtask to exactly one tool from the allowed list. "
         "Return tool_name and a kwargs object (not a stringified JSON blob). "
         "kwargs must match that tool's parameters; use {} if no arguments. "
-        f"Allowed tool_name values: {allowed_line}."
+        f"Allowed tool_name values: {allowed_line}. "
+        "Special rule: if subtask text contains `Requested model: <...>`, and the chosen tool is `train_model`, "
+        "set `requested_model_name` to the same <...> text."
     )
     user = (
         "## Tool catalog (reference)\n\n"

@@ -55,7 +55,7 @@ function App() {
   const completedSubtasks = pipelineProgress.completed
   const progressPhaseHint =
     pipelineProgress.replanRound > 0
-      ? `当前为第 ${pipelineProgress.replanRound} 次重规划后的执行段；进度仅统计本段内子任务（重试合并为一步）。`
+      ? `Current segment after plan replanning (round ${pipelineProgress.replanRound}); progress counts only subtasks in this segment (retries are merged into a single step).`
       : undefined
   const currentStep =
     typeof currentSubtaskEvent?.subtask_title === 'string'

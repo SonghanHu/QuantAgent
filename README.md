@@ -163,8 +163,7 @@ The orchestrator **repairs plan edges** after decomposition (e.g. ensures `run_b
 │   │   ├── post_run_chat.py    # Build context pack + chat (max_completion_tokens)
 │   │   └── plan_revision.py    # revise_plan: LLM replan after failure
 │   ├── llm/
-│   │   ├── task_decompose.py   # NL → TaskBreakdown (4-8 tool-aligned subtasks)
-│   │   └── yfinance_spec.py    # NL → YFinanceFetchSpec
+│   │   └── task_decompose.py   # NL → TaskBreakdown (4-8 tool-aligned subtasks)
 │   ├── tools/
 │   │   ├── __init__.py         # TOOL_REGISTRY + run_tool
 │   │   ├── search.py           # web_search (Brave API)

@@ -57,6 +57,16 @@ Before writing `OUTPUT_JSON`, verify:
 3. **Lag structure** is correct: one intentional lag from signal to return; no double lag.
 4. **Turnover** is computed from **actual held** weights (post-ffill for weekly/monthly), not from pre-ffill targets alone if that misstates trading.
 5. **Survivorship / universe bias:** if data or tools imply current constituents only (e.g. S&P 500 list without history), say so briefly in `notes`.
+6. **Signal mapping must be explicit (especially for model_based long/flat):**
+   - State the prediction target horizon (e.g. `next-day return`) in `signal_mapping.prediction_target_horizon`.
+   - State the signal rule / threshold used to decide **invested vs flat** in `signal_mapping.signal_rule`.
+   - State the execution / holding rule (e.g. hold from next bar close) in `signal_mapping.execution`.
+   - Compute and report exposure stats:
+     - `signal_mapping.avg_gross_exposure` (average of sum(abs(weights)) over evaluated days)
+     - `signal_mapping.percent_days_invested` (percentage of evaluated days where gross exposure > 0)
+   - Define `win_rate` denominator precisely:
+     - If your strategy can be flat, `win_rate` must be computed on **invested days only** by default (exclude flat days from denominator), unless the user explicitly asked otherwise.
+     - Record this definition in `signal_mapping.win_rate_definition`.
 
 ## What you produce
 
@@ -68,7 +78,13 @@ A **single Python script** that:
      - Split data into **train** and **test** by time order (using `train_ratio`), ensuring **no look-ahead**.
      - Train the model specified in `MODEL_OUTPUT_JSON` (model type + feature columns + target) on the train set using scikit-learn.
      - Generate **predictions** on the test set.
-     - Convert predictions into signals.
+     - Convert predictions into signals using an **explicit, auditable mapping**:
+       - Define `signal_threshold` (default `0.0` unless the user explicitly requested another threshold or the strategy context provides one).
+       - For `long_only` strategies:
+         - **Invested vs flat:** invest when `y_pred > signal_threshold`, otherwise hold flat (no exposure).
+       - For `long_short` strategies:
+         - Use the same threshold explicitly to decide long vs short (e.g. `y_pred > threshold` => long, `y_pred < -threshold` => short, otherwise flat) unless strategy context specifies a different rule.
+       - Store the mapping in `signal_mapping` (threshold, long/flat conditions, execution/holding rule) and ensure win-rate is computed using the same invested-vs-flat definition.
    - **`rule_based`**:
      - Do **not** train a model.
      - When `train_ratio == 1.0` (typical): compute strategy returns and **all** summary metrics on the **entire** usable date range (after any warm-up / NaN drop). Do **not** report metrics only on a short “test tail” unless `train_ratio < 1`.
@@ -95,6 +111,15 @@ A **single Python script** that:
   "win_rate": float,
   "avg_turnover": float,
   "n_trades": int,
+  "signal_mapping": {
+    "prediction_target_horizon": "next-day return",
+    "signal_rule": string,
+    "execution": string,
+    "signal_threshold": null,
+    "avg_gross_exposure": float,
+    "percent_days_invested": float,
+    "win_rate_definition": string
+  },
   "test_start": "YYYY-MM-DD",
   "test_end": "YYYY-MM-DD",
   "n_test_days": int,
