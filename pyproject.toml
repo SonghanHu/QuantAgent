@@ -1,7 +1,13 @@
 [project]
 name = "tools-research"
 version = "0.1.0"
+description = "QuantAgent — NL-driven quant research agent workflow"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = [
     "fastapi>=0.135.2",
     "matplotlib>=3.10.8",
